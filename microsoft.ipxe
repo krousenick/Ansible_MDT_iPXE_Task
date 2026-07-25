@@ -1,0 +1,59 @@
+#!ipxe
+
+:microsoft_menu
+menu Microsoft Dist Based Installers
+item --gap Install Windows:
+item MDT_Dev ${space} Boot to MDT Development Server
+item MDT_Prod1 ${space} Boot to MDT Production 1 Server
+item capture_wim ${space} Boot to Capture WIM
+item boot_wds_hct ${space} Boot to HCT WDS Server
+item boot_wds_dct ${space} Boot to DCT WDS Server
+choose menu || goto microsoft_exit
+echo ${cls}
+goto ${menu}
+
+:change_menu
+chain ${menu}.ipxe || goto error
+goto linux_menu
+
+:microsoft_exit
+clear menu
+exit 0
+
+:MDT_Dev
+kernel wimboot/wimboot
+initrd MDT_Dev/x64/Boot/BCD                     BCD
+initrd MDT_Dev/x64/Boot/boot.sdi                boot.sdi
+initrd MDT_Dev/boot.wim          boot.wim
+boot
+
+:MDT_Prod1
+kernel wimboot/wimboot
+initrd MDT_Prod1/x64/Boot/BCD                     BCD
+initrd MDT_Prod1/x64/Boot/boot.sdi                boot.sdi
+initrd MDT_Prod1/boot.wim          boot.wim
+boot
+
+:capture_wim
+kernel wimboot/wimboot
+initrd MDT_Prod1/x64/Boot/BCD                     BCD
+initrd MDT_Prod1/x64/Boot/boot.sdi                boot.sdi
+initrd MDT_Capture/boot.wim          boot.wim
+boot
+
+:boot_wds_hct
+set wdsserver:ipv4 10.2.0.9
+set netX/next-server ${wdsserver}
+chain tftp://${wdsserver}/Boot\x64\wdsmgfw.efi
+
+:boot_wds_dct
+set wdsserver:ipv4 10.3.0.9
+set netX/next-server ${wdsserver}
+chain tftp://${wdsserver}/Boot\x64\wdsmgfw.efi
+
+:boot_wds_hct_efi
+set next-server 10.2.0.9
+set filename /boot/x64/bootmgfw.efi
+set net0.dhcp/filename:string /boot/x64/bootmgfw.efi
+set proxydhcp/filename:string /boot/x64/bootmgfw.efi
+chain /boot/x64/bootmgfw.efi

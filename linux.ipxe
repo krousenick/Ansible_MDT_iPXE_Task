@@ -1,0 +1,67 @@
+#!ipxe
+
+:linux_menu
+menu Linux Installers
+item --gap Install Generic Linux OS:
+item debian ${space} Debian
+item --gap Install Linux via Kickstart:
+item rhel9fips ${space} RHEL Linux Latest 9 FIPS Install via Kickstart
+item rhel10fips ${space} RHEL Linux Latest 10 FIPS Install via Kickstart
+item rhel10fipsgui ${space} RHEL Linux Latest 10 GUI FIPS Install via Kickstart
+item ph5rnr ${space} Photon 5 Runner Install via Kickstart
+choose menu || goto linux_exit
+echo ${cls}
+goto ${menu}
+
+:change_menu
+chain ${menu}.ipxe || goto error
+goto linux_menu
+
+:linux_exit
+clear menu
+exit 0
+
+
+:rhel9fips
+imgfree
+kernel ${boot_url}/rhel/9/x86_64/iso/boot/images/pxeboot/vmlinuz \
+    inst.repo=${boot_url}/rhel/9/x86_64/iso/boot/ \
+    inst.ks=${boot_url}/kickstart/rhel-9-fips.ks \
+	fips=1 \
+	initrd=initrd.img
+initrd ${boot_url}/rhel/9/x86_64/iso/boot/images/pxeboot/initrd.img
+boot
+goto linux_menu
+
+:rhel10fips
+imgfree
+kernel ${boot_url}/rhel/10/x86_64/iso/boot/images/pxeboot/vmlinuz \
+    inst.repo=${boot_url}/rhel/10/x86_64/iso/boot/ \
+    inst.ks=${boot_url}/kickstart/rhel-10-fips.ks \
+	fips=1 \
+	initrd=initrd.img
+initrd ${boot_url}/rhel/10/x86_64/iso/boot/images/pxeboot/initrd.img
+boot
+goto linux_menu
+
+:rhel10fipsgui
+imgfree
+kernel ${boot_url}/rhel/10/x86_64/iso/boot/images/pxeboot/vmlinuz \
+    inst.repo=${boot_url}/rhel/10/x86_64/iso/boot/ \
+    inst.ks=${boot_url}/kickstart/rhel-10-fips-gui.ks \
+	fips=1 \
+	initrd=initrd.img
+initrd ${boot_url}/rhel/10/x86_64/iso/boot/images/pxeboot/initrd.img
+boot
+goto linux_menu
+
+:ph5rnr
+imgfree
+kernel ${boot_url}/photon/5/images/pxeboot/vmlinuz root=/dev/ram0 \
+    loglevel=3 \
+    repo=${boot_url}/photon/5/photon_release_5_x86_64 \
+    ks=${boot_url}/kickstart/photon-5-chost.ks \
+    initrd=initrd.img
+initrd ${boot_url}/photon/5/images/pxeboot/initrd.img
+boot
+goto linux_menu

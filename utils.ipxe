@@ -1,0 +1,89 @@
+#!ipxe
+
+:utils_menu
+menu Utilities
+item --gap Boot to Utilities:
+item adr ${space} Boot to Wondershare Disk Recovery Software
+item akd ${space} Boot to ActivKill Disk
+item hbcdpe ${space} Boot to Hiren's Boot CD PE
+item capture_wim ${space} Boot to Capture WIM
+item memtest86plus ${space} Boot to memtest86plus
+item boot_wds_dct ${space} Boot to DCT WDS Server
+choose --default ${menu} menu || goto utils_exit
+echo ${cls}
+goto ${menu} ||
+chain ${menu}.ipxe || goto utils_exit
+goto utils_exit
+
+
+:change_menu
+chain ${menu}.ipxe || goto error
+goto linux_menu
+
+:utils_exit
+clear menu
+exit 0
+
+:wdr
+imgfree
+kernel ${boot_url}/wimboot/wimboot
+initrd -n bootmgr     wondershare/BOOTMGR       bootmgr ||
+initrd -n bootmgr.efi wondershare/BOOT/EN-US/BOOTMGR.EXE.MUI   bootmgr.efi || 
+initrd -n bcd         wondershare/BOOT/BCD      bcd ||     
+initrd -n bcd         wondershare/EFI/MICROSOFT/BOOT/BCD      bcd ||
+initrd -n boot.sdi    wondershare/BOOT/BOOT.SDI boot.sdi ||
+initrd -n boot.wim    wondershare/SOURCES/BOOT.WIM boot.wim
+boot
+
+:akd
+imgfree
+kernel wimboot/wimboot
+initrd -n bootmgr     killdisk/bootmgr       bootmgr ||
+initrd -n bootmgr.efi killdisk/bootmgr.efi   bootmgr.efi ||      
+initrd -n bcd         killdisk/Boot/BCD      bcd ||
+initrd -n boot.sdi    killdisk/Boot/boot.sdi boot.sdi ||
+initrd -n boot.wim    killdisk/sources/boot.wim boot.wim
+boot
+
+
+# REF: https://www.hirensbootcd.org/files/HBCD_PE_x64.iso
+:hbcdpe
+imgfree
+kernel ${boot_url}/wimboot/wimboot
+initrd -n bootmgr     ${boot_url}/HirensPE/BOOTMGR       bootmgr ||
+initrd -n bootmgr.efi ${boot_url}/HirensPE/bootmgr.efi   bootmgr.efi ||      
+initrd -n bcd         ${boot_url}/HirensPE/boot/bcd      bcd ||
+initrd -n boot.sdi    ${boot_url}/HirensPE/boot/boot.sdi boot.sdi ||
+initrd -n boot.wim    ${boot_url}/HirensPE/sources/boot.wim boot.wim
+boot
+
+
+:capture_wim
+kernel wimboot/wimboot
+initrd MDT_Prod1/x64/Boot/BCD                     BCD
+initrd MDT_Prod1/x64/Boot/boot.sdi                boot.sdi
+initrd MDT_Capture/boot.wim          boot.wim
+boot
+
+:boot_wds_hct
+set wdsserver:ipv4 10.2.0.9
+set netX/next-server ${wdsserver}
+chain tftp://${wdsserver}/Boot\x64\wdsmgfw.efi
+
+:boot_wds_dct
+set wdsserver:ipv4 10.3.0.9
+set netX/next-server ${wdsserver}
+chain tftp://${wdsserver}/Boot\x64\wdsmgfw.efi
+
+:boot_wds_hct_efi
+set next-server 10.2.0.9
+set filename /boot/x64/bootmgfw.efi
+set net0.dhcp/filename:string /boot/x64/bootmgfw.efi
+set proxydhcp/filename:string /boot/x64/bootmgfw.efi
+chain /boot/x64/bootmgfw.efi
+
+:memtest86plus
+imgfree
+kernel ${boot_url}/memtest86/memtest64.efi
+boot
+goto utils_menu

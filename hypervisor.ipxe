@@ -1,0 +1,39 @@
+#!ipxe
+
+:hypervisor_menu
+menu Hypervisor Installers
+item --gap Use ESC key to return to main menu
+item --gap Install ESXi:
+item esxi7ks ${space} ESXi 7 Install via Kickstart
+item esxi7iso ${space} ESXi 7 Install Generic
+item esxi8dellks ${space} ESXi 8 Install via Kickstart for Dell Hardware
+item esxi8dellvanilla ${space} ESXi 8 Install for Dell Hardware (non-automated install)
+item ph4rnr ${space} Photon 4 Runner Install via Kickstart
+item ph5rnr ${space} Photon 5 Runner Install via Kickstart
+choose menu || goto hypervisor_exit
+echo ${cls}
+goto ${menu}
+
+:change_menu
+chain ${menu}.ipxe || goto error
+goto hypervisor_menu
+
+:hypervisor_exit
+clear menu
+exit 0
+
+:esxi7iso
+imgfree
+kernel ${boot_url}/vmware/esxi/7/iso/efi/boot/bootx64.efi -c ${boot_url}/vmware/esxi/7/ks.cfg
+boot || goto hypervisor_menu
+
+:esxi8dellvanilla
+imgfree
+kernel ${boot_url}/vmware/esxi/8u2/dell-iso/efi/boot/bootx64.efi -c ${boot_url}/vmware/esxi/8u2/dell-iso/dell-efi-esxi-8-boot.cfg
+boot || goto hypervisor_menu
+
+:esxi8dellks
+imgfree
+initrd --name ks.cfg ${boot_url}/vmware/esxi/8u2/dell-iso/dell-esxi-8-kro-ks.cfg
+kernel ${boot_url}/vmware/esxi/8u2/dell-iso/efi/boot/bootx64.efi -c ${boot_url}/vmware/esxi/8u2/dell-iso/dell-efi-esxi-8-ks-boot.cfg
+boot || goto hypervisor_menu
