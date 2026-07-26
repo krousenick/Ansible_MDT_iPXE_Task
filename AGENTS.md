@@ -1,19 +1,31 @@
 # AGENTS.md - Development Guidelines
 
-This repository contains **iPXE boot scripts** (.ipxe) and **Kickstart files** (.ks) for network PXE boot and automated OS installations.
+This repository contains **iPXE boot scripts** (.ipxe), **Kickstart files** (.ks), and **CI/CD automation** for network PXE boot and automated OS installations.
 
 ## 1. Build/Lint/Test Commands
 
-### No Build System
-This is a configuration repository with no build commands, linters, or unit tests.
+### GitLab CI Pipeline
+The `.gitlab-ci.yml` provides automated linting and deployment:
+- **ipxe-lint**: Validates iPXE script syntax (shebang, labels, menu, choose, goto)
+- **kickstart-lint**: Validates kickstart files using `ksvalidator`
+- **deploy-staging**: Manual deploy to staging (main branch)
+- **deploy-production**: Auto-deploy on tags
+- **download-fedora-iso**: Manual job to download Fedora ISO
 
-### Manual Validation
+### Local Validation
 - **iPXE Scripts**: Test on VM or test hardware with iPXE boot; review syntax manually
 - **Kickstart Files**: Validate with `ksvalidator`:
   ```bash
   dnf install pykickstart
   ksvalidator kickstart/rhel-10-fips.ks
   ```
+
+### Variables for CI Deployment
+Plaintext passwords are hashed at deploy time using SHA512:
+- `ADMIN_PASSWORD_PLAINTEXT` - User password (will be hashed)
+- `GRUB_PASSWORD_PLAINTEXT` - Bootloader password (will be hashed)
+- `STAGING_SSH_*` - Staging server credentials
+- `PROD_SSH_*` - Production server credentials
 
 ---
 
