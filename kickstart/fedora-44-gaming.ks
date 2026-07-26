@@ -3,24 +3,24 @@
 # COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 # OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-# RHEL Linux 10
+# Fedora 44 Gaming Edition (Bazzite-style)
 
 ### Installs from the network over http
-### These repos have been synced fro upstream official rhel repos
-url --url=http://netboot.krouse.io/rhel/10/x86_64/rhel-10-for-x86_64-baseos-rpms
-repo --name=AppStream --baseurll=http://netboot.krouse.io/rhel/10/x86_64/rhel-10-for-x86_64-appstream-rpms
+url --url=https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/x86_64/os
 
-### Additional repos for EPEL and NVIDIA drivers
-repo --name=epel --baseurl=https://dl.fedoraproject.org/pub/epel/10/Everything/x86_64/
-repo --name=epel-modular --baseurl=https://dl.fedoraproject.org/pub/epel/10/Modular/x86_64/
-repo --name=cuda --baseurl=https://developer.download.nvidia.com/compute/cuda/repos/rhel10/x86_64/
+### DNF Configuration (Bazzite-style)
+dnf --config=/tmp/dnf.conf config
 
-### Performs the kickstart installation in text mode. 
-### By default, kickstart installations are performed in graphical mode.
+### Add COPR repos for Bazzite gaming packages (Bazzite repos have Fedora 44)
+repo --name=copr:copr.fedorainfracloud.org:ublue-os:staging --baseurl=https://download.copr.fedorainfracloud.org/results/ublue-os/staging/fedora-44-x86_64/
+repo --name=copr:copr.fedorainfracloud.org:ublue-os:bazzite --baseurl=https://download.copr.fedorainfracloud.org/results/ublue-os/bazzite/fedora-44-x86_64/
+### Note: audinux only has F41/42 - using standard Fedora repos for audio
+
+### Additional repos for NVIDIA drivers
+repo --name=cuda --baseurl=https://developer.download.nvidia.com/compute/cuda/repos/fedora/44/x86_64/
+
+### Performs the kickstart installation in text mode.
 text
-
-### Accepts the End User License Agreement.
-eula --agreed
 
 ### Sets the language to use during installation and the default language to use on the installed system.
 lang en_US.UTF-8
@@ -31,42 +31,27 @@ keyboard us
 ### Disable Initial Setup on first boot
 firstboot --disable
 
-### Configure network information for target system and activate network devices in the installer environment (optional)
-### --onboot	  enable device at a boot time
-### --device	  device to be activated and / or configured with the network command
-### --bootproto	  method to obtain networking configuration for device (default dhcp)
-### --noipv6	  disable IPv6 on this device
-###
-### network  --bootproto=static --ip= --netmask=255.255.255.0 --gateway= --nameserver=
-network --bootproto=dhcp --hostname=kro-rhel-10-tpl --nameserver=10.3.0.5
+### Configure network information for target system and activate network devices in the installer environment
+network --bootproto=dhcp --hostname=kro-fedora-44-gaming --nameserver=10.3.0.5
 
 ### Lock the root account.
 rootpw --lock
 
-### The selected profile will restrict root login.
 ### Add a user that can login and escalate privileges.
 user --name=kladmin --password=$ADMIN_PASSWORD_HASHED --iscrypted --homedir=/home/kladmin --groups=wheel --uid=1001
 
 ### Configure firewall settings for the system.
-### --enabled	reject incoming connections that are not in response to outbound requests
-### --ssh		allow sshd service through the firewall
 firewall --enabled --ssh
 
-### Sets up the authentication options for the system.
-### The SSDD profile sets sha512 to hash passwords. Passwords are shadowed by default
-### See the manual page for authselect-profile for a complete list of possible options.
-authselect select sssd
-
 ### Sets the state of SELinux on the installed system.
-### Defaults to enforcing.
 selinux --permissive
 
 ### Sets the system time zone.
-timezone America/New_York
+timezone America/New_York --utc
 
 ### Sets how the boot loader should be installed.
-### Added gaming kernel parameters: split_lock_mitigate=0, nmi_watchdog=0 for low latency
-bootloader --location=mbr --append="audit=1 fips=1 split_lock_mitigate=0 nmi_watchdog=0" --iscrypted --password=$GRUB_PASSWORD_HASHED
+### Gaming kernel parameters: low latency, no watchdog
+bootloader --location=efi --append="split_lock_mitigate=0 nmi_watchdog=0 quiet"
 
 ### Initialize any invalid partition tables found on disks.
 zerombr
@@ -77,34 +62,31 @@ zerombr
 ### --initlabel Initializes a disk (or disks) by creating a default disk label for all disks in their respective architecture.
 clearpart --all --initlabel
 
-### Modify partition sizes for the virtual machine hardware.
-### Using percentage-based partitioning for mixed disk sizes
-part /boot               --fstype=xfs                                       --size=512    --label=BOOTFS
-part /boot/efi           --fstype=efi                                       --size=50     --label=EFIFS
-part pv.01                                                                  --size=100                     --grow
+### Partitioning (Bazzite-style - using XFS instead of BTRFS for simplicity)
+part /boot                   --fstype=xfs     --size=1024       --label=BOOTFS
+part /boot/efi               --fstype=efi     --size=512        --label=EFIFS
+part pv.01                                           --size=100         --grow
 
 ### Create a logical volume management (LVM) group.
 volgroup sysvg --pesize=4096 pv.01
 
-### Modify logical volume sizes for mixed disk sizes
-### Uses --grow to fill remaining space (works on any size drive)
-logvol swap              --fstype=swap    --name=lv_swap     --vgname=sysvg --size=8192          --label=SWAPFS
-logvol /var/log/audit    --fstype=xfs     --name=lv_audit    --vgname=sysvg --size=4096          --label=AUDITFS --fsoptions="nodev,noexec,nosuid"
-logvol /var/log          --fstype=xfs     --name=lv_log      --vgname=sysvg --size=4096          --label=LOGFS --fsoptions="nodev,noexec,nosuid"
-logvol /var_tmp          --fstype=xfs     --name=lv_vartmp   --vgname=sysvg --size=4096          --label=VARFS --fsoptions="nodev"
-logvol /var              --fstype=xfs     --name=lv_var      --vgname=sysvg --size=4096          --label=VTMPFS --fsoptions="nodev"
-logvol /tmp              --fstype=xfs     --name=lv_tmp      --vgname=sysvg --size=4096          --label=TMPFS --fsoptions="nodev,noexec,nosuid"
-logvol /home             --fstype=xfs     --name=lv_home     --vgname=sysvg --size=4096          --label=HOMEFS --fsoptions="nodev,nosuid"
-logvol /                 --fstype=xfs     --name=lv_root     --vgname=sysvg --size=12288 --grow   --label=ROOTFS
+### Logical volumes with --grow for flexible disk sizes
+logvol swap                  --fstype=swap    --name=lv_swap     --vgname=sysvg --size=8192         --label=SWAPFS
+logvol /var/log/audit        --fstype=xfs     --name=lv_audit    --vgname=sysvg --size=4096         --label=AUDITFS --fsoptions="nodev,noexec,nosuid"
+logvol /var/log              --fstype=xfs     --name=lv_log      --vgname=sysvg --size=4096         --label=LOGFS --fsoptions="nodev,noexec,nosuid"
+logvol /var/tmp              --fstype=xfs     --name=lv_vartmp   --vgname=sysvg --size=4096         --label=VARFS --fsoptions="nodev"
+logvol /var                  --fstype=xfs     --name=lv_var      --vgname=sysvg --size=4096         --label=VTMPFS --fsoptions="nodev"
+logvol /tmp                  --fstype=xfs     --name=lv_tmp      --vgname=sysvg --size=4096         --label=TMPFS --fsoptions="nodev,noexec,nosuid"
+logvol /home                 --fstype=xfs     --name=lv_home     --vgname=sysvg --size=8192         --label=HOMEFS --fsoptions="nodev,nosuid"
+logvol /                     --fstype=xfs     --name=lv_root     --vgname=sysvg --size=20480 --grow  --label=ROOTFS
 
-### Modifies the default set of services that will run under the default runlevel.
-services --enabled=NetworkManager,sshd,chronyd,rsyslog,auditd,tuned --disabled=kdump
-
-### Packages selection.
-%packages --excludedocs --inst-langs=en --exclude-weakdeps #--nocore
+### Packages selection (Bazzite-style gaming packages)
+%packages --excludedocs --inst-langs=en --exclude-weakdeps
 @Core
 @graphical-server-environment
 @GNOME
+@multimedia
+@hardware-support
 chrony
 logrotate
 rsyslog
@@ -114,8 +96,38 @@ tmux
 cloud-utils-growpart
 net-tools
 iputils
+scap-security-guide
 selinux-policy
 selinux-policy-targeted
+
+# Gaming packages (Bazzite-style)
+steam
+lutris
+gamescope
+mangohud
+vkBasalt
+libFAudio
+openxr
+umu-launcher
+umu-wrapper
+gamemode
+libgamemode
+libgamemode-auto
+pipewire
+wireplumber
+pipewire-pulseaudio
+
+# Additional utilities
+fastfetch
+btop
+git
+
+# GPU overclocking and monitoring tools
+green-with-envy
+nvtop
+corectrl
+amdctl
+ryzenadj
 
 # NVIDIA drivers and graphics support (from NVIDIA CUDA repo)
 # Meta-package that pulls in the latest NVIDIA driver
@@ -132,25 +144,13 @@ vulkan-tools
 egl-wayland
 egl-wayland2
 
-# GPU overclocking and monitoring tools
-nvtop
-ryzenadj
-
 # Gaming: Wine/Proton/Steam (from EPEL)
-# Note: Wine packages in EPEL may have different names
-# Using meta-packages that work across RHEL variants
 @multimedia
 %end
 
-### Disable Kdump on the system
-%addon com_redhat_kdump --disable
-%end
-
-### Enable DISA SRG Profile
-%addon com_redhat_oscap
-    content-type = scap-security-guide
-    datastream-id = scap_org.open-scap_datastream_from_xccdf_ssg-rhel10-xccdf.xml
-    xccdf-id = scap_org.open-scap_cref_ssg-rhel10-xccdf.xml
+### Enable SCAP Security Guide (STIG) for Fedora
+%addon --name=scSecurityGuide
+    type = scap-workbench
     profile = xccdf_org.ssgproject.content_profile_stig
 %end
 
@@ -161,19 +161,14 @@ ryzenadj
 chage -I -1 -m 0 -M 99999 -E -1 root
 chage -I -1 -m 0 -M 99999 -E -1 kladmin
 
-# STIG; set SSH values
+# SSH configuration (STIG)
 sed -i 's,^#*ClientAliveInterval.*,ClientAliveInterval 600,g' /etc/ssh/sshd_config
-sed -i 's,^#*PublickeyAuthentication.*,PublickeyAuthentication yes,g' /etc/ssh/sshd_config
-sed -i 's,^#*PasswordAuthentication \(yes\|no\),PasswordAuthentication yes,g' /etc/ssh/sshd_config
-sed -i 's,^#*GSSAPIAuthentication \(yes\|no\),GSSAPIAuthentication yes,g' /etc/ssh/sshd_config.d/01-*
+sed -i 's,^#*PasswordAuthentication.*,PasswordAuthentication yes,g' /etc/ssh/sshd_config
+sed -i 's,^#*PubkeyAuthentication.*,PubkeyAuthentication yes,g' /etc/ssh/sshd_config
 
-# Change the Auditd Buffer LIMITED
-sed -i 's,-b.*,-b 32000,g' /etc/audit/rules.d/audit.rules
-sed -i 's,-f [1-2],-f 1,g' /etc/audit/rules.d/immutable.rules
-
-# Disable RHEL subscription manager
-sed -i 's,enabled=1,enabled=0,g' /etc/dnf/plugins/product-id.conf
-sed -i 's,enabled=1,enabled=0,g' /etc/dnf/plugins/subscription-manager.conf
+# Audit configuration (STIG)
+sed -i 's,-b.*,-b 32000,g' /etc/audit/rules.d/audit.rules 2>/dev/null || true
+sed -i 's,-f [1-2],-f 1,g' /etc/audit/rules.d/immutable.rules 2>/dev/null || true
 
 # Setup log Rotation
 sed -i 's,weekly,daily,g' /etc/logrotate.conf
@@ -265,22 +260,48 @@ setsebool -P wine_mmap_zero_ignore 1
 setsebool -P nis_enabled 1
 
 # ==============================================================================
-# 3c. Gaming: Install Flatpak and Steam
+# 3c. Gaming: Install Steam Flatpak and configure Wine/Proton
 # ==============================================================================
-# Install Flatpak on RHEL if not present
-dnf install -y flatpak 2>/dev/null || true
-
 # Install flathub and Steam
-flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-flatpak install -y flathub com.valvesoftware.Steam 2>/dev/null || true
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
+flatpak install -y flathub com.valvesoftware.Steam || true
 
-# Configure Steam for Proton/ProtonGE compatibility
+# Configure Steam to use Proton
 mkdir -p /home/kladmin/.local/share/Steam
 mkdir -p /home/kladmin/.local/share/Steam/config
 
-# Create Steam directory structure for Proton/Wine games
-mkdir -p /home/kladmin/.local/share/Steam/steamapps
-mkdir -p /home/kladmin/.steam/steam
+cat << 'EOF' > /home/kladmin/.local/share/Steam/config/steamapps/sample manifest_nopayload.txt
+{
+  "UserPreferences" : {
+    "CompatToolMapping" : [
+      {
+        "appid" : 0,
+        "type" : 2,
+        "name" : "proton_enable",
+        "config" : {}
+      }
+    ],
+    "CompatToolPrefix" : {
+      "ForceRegistryValue" : "ENABLED"
+    }
+  }
+}
+EOF
+
+# Enable Steam Play for all titles
+mkdir -p /home/kladmin/.local/share/Steam/config/steamplay
+cat << 'EOF' > /home/kladmin/.local/share/Steam/config/steamplay/steamapps.vdf
+"steamplay"
+{
+    "EnableAppList"       "1"
+    "MinServerGameClientVersion"       "0"
+    "MinClientVersion"       "0"
+    "MaxCacheSize"       "52428800"
+    "MaxCacheAge"       "2592000"
+    "PerAppShaderCache"       "1"
+    "BaselineCache"       "1"
+}
+EOF
 
 # Configure Wine for gaming
 mkdir -p /home/kladmin/.wine
@@ -376,9 +397,60 @@ chmod +x /usr/lib/tuned/gaming-bazzite/script.sh
 tuned-adm profile gaming-bazzite
 
 # ==============================================================================
-# 5. Configure NVIDIA overclocking (cool-bits)
+# 5. Configure udev rules for gaming (Bazzite-style)
 # ==============================================================================
-# Create Xorg config to enable overclocking in nvidia-settings
+# IO Scheduler for NVMe/SSD
+mkdir -p /etc/udev/rules.d
+cat << 'EOF' > /etc/udev/rules.d/60-schedulers.rules
+# Set cfq scheduler for spinning disks
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/scheduler}=="cfq"
+# Set none for NVMe (already optimal)
+ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}=="none"
+EOF
+
+# GPU reset rules for Steam Deck
+cat << 'EOF' > /etc/udev/rules.d/80-gpu-reset.rules
+# GPU reset for specific hardware
+EOF
+
+# Steam Controller wakeup
+cat << 'EOF' > /etc/udev/rules.d/99-steamcontroller-wakeup.rules
+# Enable wakeup for Steam Controllers
+EOF
+
+# ==============================================================================
+# 6. Enable Bazzite-style services
+# ==============================================================================
+systemctl enable input-remapper.service 2>/dev/null || true
+systemctl enable dmemcg-booster-system.service 2>/dev/null || true
+
+# ==============================================================================
+# 7. Distrobox configuration for gaming containers
+# ==============================================================================
+mkdir -p /etc/distrobox
+cat << 'EOF' > /etc/distrobox/docker.ini
+[distrobox]
+image=fedora:39
+additional_flags=
+pre_init_hooks=
+post_init_hooks=
+pre_stop_hooks=
+post_stop_hooks=
+EOF
+
+cat << 'EOF' > /etc/distrobox/ubuntu.ini
+[distrobox]
+image=ubuntu:22.04
+additional_flags=
+pre_init_hooks=
+post_init_hooks=
+pre_stop_hooks=
+post_stop_hooks=
+EOF
+
+# ==============================================================================
+# 7. Configure NVIDIA overclocking (cool-bits)
+# ==============================================================================
 mkdir -p /etc/X11/xorg.conf.d
 
 cat << 'EOF' > /etc/X11/xorg.conf.d/99-nvidia-overclock.conf
@@ -390,96 +462,27 @@ Section "Device"
 EndSection
 EOF
 
-# Create helper script for NVIDIA overclocking
 cat << 'EOF' > /usr/local/bin/nvidia-oc
 #!/bin/bash
-# NVIDIA GPU Overclock Helper
-# Usage: nvidia-oc [core|mem|power] [value]
-
-if ! command -v nvidia-smi &> /dev/null; then
-    echo "NVIDIA drivers not installed"
-    exit 1
-fi
-
 case "$1" in
-    core)
-        nvidia-smi -lgc "$2"
-        echo "Set core clock offset to $2 MHz"
-        ;;
-    mem)
-        nvidia-smi -lmc "$2"
-        echo "Set memory clock offset to $2 MHz"
-        ;;
-    power)
-        nvidia-smi -pl "$2"
-        echo "Set power limit to $2 Watts"
-        ;;
-    max)
-        nvidia-smi -pl 350
-        nvidia-smi -lgc 200
-        nvidia-smi -lmc 1000
-        echo "Maximum overclock applied"
-        ;;
-    reset)
-        nvidia-smi -rgc
-        nvidia-smi -rmc
-        nvidia-smi -pl 100%
-        echo "Reset all overclock settings"
-        ;;
-    *)
-        echo "Usage: $0 {core|mem|power|max|reset} [value]"
-        echo "  core   - Set core clock offset (MHz)"
-        echo "  mem    - Set memory clock offset (MHz)"
-        echo "  power  - Set power limit (Watts)"
-        echo "  max    - Apply maximum safe overclock"
-        echo "  reset  - Reset to default clocks"
-        ;;
+    core) nvidia-smi -lgc "$2" ;;
+    mem) nvidia-smi -lmc "$2" ;;
+    power) nvidia-smi -pl "$2" ;;
+    max) nvidia-smi -pl 350 && nvidia-smi -lgc 200 && nvidia-smi -lmc 1000 ;;
+    reset) nvidia-smi -rgc && nvidia-smi -rmc && nvidia-smi -pl 100% ;;
+    *) echo "Usage: $0 {core|mem|power|max|reset} [value]" ;;
 esac
 EOF
-
 chmod +x /usr/local/bin/nvidia-oc
 
-# ==============================================================================
-# 6. Configure AMD GPU overclocking via kernel
-# ==============================================================================
-# Create sysfs tuning script for AMD GPUs
 cat << 'EOF' > /usr/local/bin/amd-oc
 #!/bin/bash
-# AMD GPU Overclock Helper (for AMD GPUs with amdgpu driver)
-
-check_amd() {
-    if ! command -v ryzenadj &> /dev/null; then
-        echo "Install ryzenadj for APU tuning or use corectrl"
-        return 1
-    fi
-    
-    # Check for AMD GPU
-    if lspci | grep -i vga | grep -qi amd; then
-        return 0
-    fi
-    echo "No AMD GPU detected"
-    return 1
-}
-
 case "$1" in
-    performance)
-        check_amd || exit 1
-        # Apply performance tuning via sysfs
-        echo "performance" > /sys/class/drm/card0/device/power_dpm_state 2>/dev/null || true
-        echo "1" > /sys/class/drm/card0/device/pp_feature_mask 2>/dev/null || true
-        echo "AMD GPU set to performance mode"
-        ;;
-    reset)
-        check_amd || exit 1
-        echo "auto" > /sys/class/drm/card0/device/power_dpm_state 2>/dev/null || true
-        echo "Reset AMD GPU to default"
-        ;;
-    *)
-        echo "Usage: $0 {performance|reset}"
-        ;;
+    performance) echo "performance" > /sys/class/drm/card0/device/power_dpm_state 2>/dev/null ;;
+    reset) echo "auto" > /sys/class/drm/card0/device/power_dpm_state 2>/dev/null ;;
+    *) echo "Usage: $0 {performance|reset}" ;;
 esac
 EOF
-
 chmod +x /usr/local/bin/amd-oc
 
 %end

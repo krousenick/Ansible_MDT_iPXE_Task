@@ -1,0 +1,324 @@
+stages:
+  - lint
+  - deploy
+
+variables:
+  DEPLOY_PATH: "F:/wwwroot"
+
+ipxe-lint:
+  stage: lint
+  image: ubuntu:latest
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends > /dev/null 2>&1
+  script:
+    - |
+      echo "=== Linting iPXE Scripts ==="
+      FAILED=0
+      for ipxe_file in *.ipxe; do
+        if [ -f "$ipxe_file" ]; then
+          echo "Linting: $ipxe_file"
+          if ! head -1 "$ipxe_file" | grep -q '^#!ipxe'; then
+            echo "  ERROR: Missing #!ipxe shebang"
+            FAILED=1
+          fi
+          LABEL_COUNT=$(grep -c '^:' "$ipxe_file" || true)
+          if [ "$LABEL_COUNT" -eq 0 ]; then
+            echo "  WARNING: No labels found in $ipxe_file"
+          fi
+          if ! grep -q 'menu ' "$ipxe_file"; then
+            echo "  WARNING: No menu definition found"
+          fi
+          if ! grep -q 'choose ' "$ipxe_file"; then
+            echo "  WARNING: No menu selection (choose) found"
+          fi
+          if ! grep -q 'goto ' "$ipxe_file"; then
+            echo "  WARNING: No goto statements found"
+          fi
+          echo "  PASS: $ipxe_file"
+        fi
+      done
+      if [ $FAILED -ne 0 ]; then
+        echo "=== iPXE Linting FAILED ==="
+        exit 1
+      fi
+      echo "=== All iPXE files passed ==="
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+kickstart-lint:
+  stage: lint
+  image: fedora:latest
+  before_script:
+    - dnf install -y pykickstart > /dev/null 2>&1
+  script:
+    - |
+      echo "=== Linting Kickstart Files ==="
+      FAILED=0
+      for ks_file in kickstart/*.ks; do
+        if [ -f "$ks_file" ]; then
+          echo "Validating: $ks_file"
+          if ksvalidator "$ks_file"; then
+            echo "  PASS: $ks_file"
+          else
+            echo "  FAIL: $ks_file validation failed"
+            FAILED=1
+          fi
+        fi
+      done
+      if [ $FAILED -ne 0 ]; then
+        echo "=== Kickstart Linting FAILED ==="
+        exit 1
+      fi
+      echo "=== All kickstart files passed ==="
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+deploy-staging:
+  stage: deploy
+  image: python:3.12-alpine
+  before_script:
+    - apk add --no-cache openssh-client gettext
+    - |
+      cat > /tmp/hash_passwords.py << 'ENDOFPYTHON'
+      import crypt
+      import secrets
+      import os
+      import sys
+
+      def hash_password(password):
+          salt = secrets.token_hex(8)
+          return crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512, salt=salt.encode()))
+
+      if os.environ.get('ADMIN_PASSWORD_PLAINTEXT'):
+          hashed = hash_password(os.environ['ADMIN_PASSWORD_PLAINTEXT'])
+          with open('/tmp/admin_pass.env', 'w') as f:
+              f.write(f'ADMIN_PASSWORD_HASHED={hashed}\n')
+      
+      if os.environ.get('GRUB_PASSWORD_PLAINTEXT'):
+          hashed = hash_password(os.environ['GRUB_PASSWORD_PLAINTEXT'])
+          with open('/tmp/grub_pass.env', 'w') as f:
+              f.write(f'GRUB_PASSWORD_HASHED={hashed}\n')
+      ENDOFPYTHON
+  script:
+    - |
+      echo "=== Deploying to Staging IIS Server ==="
+      
+      if [ -z "$STAGING_SSH_HOST" ] || [ -z "$STAGING_SSH_USER" ]; then
+        echo "ERROR: Staging SSH credentials not configured"
+        exit 1
+      fi
+      
+      if [ -n "$STAGING_SSH_KEY" ]; then
+        mkdir -p ~/.ssh
+        echo "$STAGING_SSH_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        echo "Host staging
+          HostName $STAGING_SSH_HOST
+          User $STAGING_SSH_USER
+          IdentityFile ~/.ssh/id_ed25519
+          StrictHostKeyChecking accept-new" > ~/.ssh/config
+      fi
+      
+      echo "Deploying iPXE scripts..."
+      scp -o StrictHostKeyChecking=no -r *.ipxe "$STAGING_SSH_USER@$STAGING_SSH_HOST:$DEPLOY_PATH/"
+      
+      echo "Processing password variables..."
+      python3 /tmp/hash_passwords.py
+      
+      source /tmp/admin_pass.env 2>/dev/null || true
+      source /tmp/grub_pass.env 2>/dev/null || true
+      
+      export ADMIN_PASSWORD_HASHED
+      export GRUB_PASSWORD_HASHED
+      
+      echo "Substituting variables in kickstart files..."
+      mkdir -p kickstart-processed
+      for ks_file in kickstart/*.ks; do
+        if [ -f "$ks_file" ]; then
+          basename_ks=$(basename "$ks_file")
+          envsubst < "$ks_file" > "kickstart-processed/$basename_ks"
+        fi
+      done
+      
+      echo "Deploying kickstart files..."
+      scp -o StrictHostKeyChecking=no -r kickstart-processed/ "$STAGING_SSH_USER@$STAGING_SSH_HOST:$DEPLOY_PATH/kickstart/"
+      
+      rm -rf kickstart-processed /tmp/*.env
+      echo "=== Staging deployment complete ==="
+  environment:
+    name: staging
+    url: http://$STAGING_SSH_HOST
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual
+  needs:
+    - ipxe-lint
+    - kickstart-lint
+
+deploy-production:
+  stage: deploy
+  image: python:3.12-alpine
+  before_script:
+    - apk add --no-cache openssh-client gettext
+    - |
+      cat > /tmp/hash_passwords.py << 'ENDOFPYTHON'
+      import crypt
+      import secrets
+      import os
+
+      def hash_password(password):
+          salt = secrets.token_hex(8)
+          return crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512, salt=salt.encode()))
+
+      if os.environ.get('ADMIN_PASSWORD_PLAINTEXT'):
+          hashed = hash_password(os.environ['ADMIN_PASSWORD_PLAINTEXT'])
+          with open('/tmp/admin_pass.env', 'w') as f:
+              f.write(f'ADMIN_PASSWORD_HASHED={hashed}\n')
+      
+      if os.environ.get('GRUB_PASSWORD_PLAINTEXT'):
+          hashed = hash_password(os.environ['GRUB_PASSWORD_PLAINTEXT'])
+          with open('/tmp/grub_pass.env', 'w') as f:
+              f.write(f'GRUB_PASSWORD_HASHED={hashed}\n')
+      ENDOFPYTHON
+  script:
+    - |
+      echo "=== Deploying to Production IIS Server ==="
+      
+      if [ -z "$PROD_SSH_HOST" ] || [ -z "$PROD_SSH_USER" ]; then
+        echo "ERROR: Production SSH credentials not configured"
+        exit 1
+      fi
+      
+      if [ -n "$PROD_SSH_KEY" ]; then
+        mkdir -p ~/.ssh
+        echo "$PROD_SSH_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        echo "Host production
+          HostName $PROD_SSH_HOST
+          User $PROD_SSH_USER
+          IdentityFile ~/.ssh/id_ed25519
+          StrictHostKeyChecking accept-new" > ~/.ssh/config
+      fi
+      
+      echo "Deploying iPXE scripts..."
+      scp -o StrictHostKeyChecking=no -r *.ipxe "$PROD_SSH_USER@$PROD_SSH_HOST:$DEPLOY_PATH/"
+      
+      echo "Processing password variables..."
+      python3 /tmp/hash_passwords.py
+      
+      source /tmp/admin_pass.env 2>/dev/null || true
+      source /tmp/grub_pass.env 2>/dev/null || true
+      
+      export ADMIN_PASSWORD_HASHED
+      export GRUB_PASSWORD_HASHED
+      
+      echo "Substituting variables in kickstart files..."
+      mkdir -p kickstart-processed
+      for ks_file in kickstart/*.ks; do
+        if [ -f "$ks_file" ]; then
+          basename_ks=$(basename "$ks_file")
+          envsubst < "$ks_file" > "kickstart-processed/$basename_ks"
+        fi
+      done
+      
+      echo "Deploying kickstart files..."
+      scp -o StrictHostKeyChecking=no -r kickstart-processed/ "$PROD_SSH_USER@$PROD_SSH_HOST:$DEPLOY_PATH/kickstart/"
+      
+      rm -rf kickstart-processed /tmp/*.env
+      echo "=== Production deployment complete ==="
+  environment:
+    name: production
+    url: http://$PROD_SSH_HOST
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs:
+    - ipxe-lint
+    - kickstart-lint
+
+download-fedora-iso:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client wget squashfs-tools
+  script:
+    - |
+      echo "=== Downloading Fedora 44 Workstation ISO ==="
+      
+      # Verify SSH credentials
+      if [ -z "$PROD_SSH_HOST" ] || [ -z "$PROD_SSH_USER" ]; then
+        echo "ERROR: SSH credentials not configured"
+        exit 1
+      fi
+      
+      # Set up SSH key
+      if [ -n "$PROD_SSH_KEY" ]; then
+        mkdir -p ~/.ssh
+        echo "$PROD_SSH_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        echo "Host production
+          HostName $PROD_SSH_HOST
+          User $PROD_SSH_USER
+          IdentityFile ~/.ssh/id_ed25519
+          StrictHostKeyChecking accept-new" > ~/.ssh/config
+      fi
+      
+      # Determine Fedora version and download
+      FEDORA_VERSION=${FEDORA_VERSION:-44}
+      ISO_NAME="Fedora-Workstation-Live-x86_64-${FEDORA_VERSION}-1.2.0.iso"
+      ISO_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/${FEDORA_VERSION}/Workstation/x86_64/iso/${ISO_NAME}"
+      
+      echo "Downloading Fedora $FEDORA_VERSION..."
+      wget -q --show-progress -O "${ISO_NAME}" "${ISO_URL}" || {
+        echo "ISO download failed, trying latest..."
+        # Try to find the latest ISO
+        LATEST_URL=$(wget -q -O- "https://download.fedoraproject.org/pub/fedora/linux/releases/${FEDORA_VERSION}/Workstation/x86_64/iso/" | grep -oP 'Fedora-Workstation-Live-x86_64-[0-9.]+\.iso' | head -1)
+        if [ -n "$LATEST_URL" ]; then
+          wget -q --show-progress -O "fedora-live.iso" "https://download.fedoraproject.org/pub/fedora/linux/releases/${FEDORA_VERSION}/Workstation/x86_64/iso/${LATEST_URL}"
+          ISO_NAME="fedora-live.iso"
+        else
+          echo "Could not find latest ISO"
+          exit 1
+        fi
+      }
+      
+      echo "ISO downloaded successfully"
+      
+      # Create mount point and extract ISO
+      echo "Extracting ISO contents..."
+      mkdir -p iso_mount fedora_extract
+      
+      mount -o loop,ro "${ISO_NAME}" iso_mount/
+      cp -r iso_mount/* fedora_extract/
+      
+      # Move kernel and initrd to proper location
+      mkdir -p fedora_extract/boot/images/pxeboot
+      cp fedora_extract/images/pxeboot/vmlinuz fedora_extract/boot/images/pxeboot/ 2>/dev/null || true
+      cp fedora_extract/images/pxeboot/initrd.img fedora_extract/boot/images/pxeboot/ 2>/dev/null || true
+      
+      umount iso_mount
+      
+      echo "Deploying to IIS server..."
+      # Create versioned directory
+      ssh -o StrictHostKeyChecking=no "$PROD_SSH_USER@$PROD_SSH_HOST" "mkdir -p $DEPLOY_PATH/fedora/${FEDORA_VERSION}/x86_64/iso"
+      
+      # Upload extracted ISO content
+      scp -o StrictHostKeyChecking=no -r fedora_extract/ "$PROD_SSH_USER@$PROD_SSH_HOST:$DEPLOY_PATH/fedora/${FEDORA_VERSION}/x86_64/iso/"
+      
+      # Create symlink for "latest"
+      ssh -o StrictHostKeyChecking=no "$PROD_SSH_USER@$PROD_SSH_HOST" "ln -sfn ${FEDORA_VERSION} $DEPLOY_PATH/fedora/latest"
+      
+      # Cleanup
+      rm -rf "${ISO_NAME}" iso_mount fedora_extract
+      
+      echo "=== Fedora ISO deployed successfully ==="
+      echo "URL: http://$PROD_SSH_HOST/fedora/${FEDORA_VERSION}/x86_64/iso/"
+  environment:
+    name: production
+    url: http://$PROD_SSH_HOST
+  rules:
+    - if: $FEDORA_DOWNLOAD == "true"
+  when: manual

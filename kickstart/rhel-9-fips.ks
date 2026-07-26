@@ -41,7 +41,7 @@ rootpw --lock
 
 ### The selected profile will restrict root login.
 ### Add a user that can login and escalate privileges.
-user --name=kladmin --password=#ADMIN_PASSWORD_HASHED --iscrypted --homedir=/lochome/kladmin --groups=wheel --uid=1001
+user --name=kladmin --password=$ADMIN_PASSWORD_HASHED --iscrypted --homedir=/home/kladmin --groups=wheel --uid=1001
 
 ### Configure firewall settings for the system.
 ### --enabled	reject incoming connections that are not in response to outbound requests

@@ -8,6 +8,7 @@ item --gap Install Linux via Kickstart:
 item rhel9fips ${space} RHEL Linux Latest 9 FIPS Install via Kickstart
 item rhel10fips ${space} RHEL Linux Latest 10 FIPS Install via Kickstart
 item rhel10fipsgui ${space} RHEL Linux Latest 10 GUI FIPS Install via Kickstart
+item fedora44gaming ${space} Fedora 44 Gaming Edition (Bazzite-style)
 item ph5rnr ${space} Photon 5 Runner Install via Kickstart
 choose menu || goto linux_exit
 echo ${cls}
@@ -52,6 +53,16 @@ kernel ${boot_url}/rhel/10/x86_64/iso/boot/images/pxeboot/vmlinuz \
 	fips=1 \
 	initrd=initrd.img
 initrd ${boot_url}/rhel/10/x86_64/iso/boot/images/pxeboot/initrd.img
+boot
+goto linux_menu
+
+:fedora44gaming
+imgfree
+kernel ${boot_url}/fedora/44/x86_64/iso/boot/images/pxeboot/vmlinuz \
+    inst.repo=${boot_url}/fedora/44/x86_64/iso/ \
+    inst.ks=${boot_url}/kickstart/fedora-44-gaming.ks \
+	initrd=initrd.img
+initrd ${boot_url}/fedora/44/x86_64/iso/boot/images/pxeboot/initrd.img
 boot
 goto linux_menu
 
