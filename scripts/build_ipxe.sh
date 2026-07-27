@@ -1,6 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
+DEPLOY_PATH="${DEPLOY_PATH:-F:/wwwroot}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source shared functions
+if [ -f "$SCRIPT_DIR/remote_helpers.sh" ]; then
+    source "$SCRIPT_DIR/remote_helpers.sh"
+fi
+
 echo "=== Building iPXE with HTTPS + EFI support ==="
 
 git clone --depth 1 https://github.com/ipxe/ipxe.git /tmp/ipxe
@@ -30,28 +38,45 @@ cat > config/local.h << 'EOF'
 EOF
 
 echo "Building EFI binary..."
-make -j"$(nproc)" bin-x86_64-efi/ipxe.efi || {
+make -j1 bin-x86_64-efi/ipxe.efi || {
     echo "ERROR: EFI build failed"
     exit 1
 }
 
 echo "Building BIOS binary..."
-make -j"$(nproc)" bin/ipxe.pxe || {
+make -j1 bin/ipxe.pxe || {
     echo "ERROR: BIOS build failed"
     exit 1
 }
 
+echo "Build complete, copying output..."
 mkdir -p /tmp/ipxe-output
+
 cp bin-x86_64-efi/ipxe.efi /tmp/ipxe-output/
+echo "  EFI binary copied"
+
 cp bin/ipxe.pxe /tmp/ipxe-output/
+echo "  BIOS binary copied"
+
+if [ -f bin/undionly.kpxe ]; then
+    cp bin/undionly.kpxe /tmp/ipxe-output/
+    echo "  UNDI binary copied"
+fi
 
 echo "Deploying to IIS..."
-ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" "mkdir -p $DEPLOY_PATH/ipxe" || {
-    echo "ERROR: Failed to create remote directory"
-    exit 1
-}
 
-scp -o StrictHostKeyChecking=no /tmp/ipxe-output/* "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/ipxe/" || {
+# Create directory using detected shell
+if type remote_mkdir &>/dev/null; then
+    remote_mkdir "$DEPLOY_PATH/ipxe"
+else
+    if ssh deploy "Get-Command powershell" 2>/dev/null; then
+        ssh deploy "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$DEPLOY_PATH/ipxe' | Out-Null\"" || true
+    else
+        ssh deploy "mkdir -p '$DEPLOY_PATH/ipxe'" || true
+    fi
+fi
+
+scp /tmp/ipxe-output/* deploy:"$DEPLOY_PATH/ipxe/" || {
     echo "ERROR: Failed to upload files"
     exit 1
 }

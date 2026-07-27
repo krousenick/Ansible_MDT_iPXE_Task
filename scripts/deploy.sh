@@ -4,15 +4,28 @@ set -euo pipefail
 DEPLOY_PATH="${DEPLOY_PATH:-F:/wwwroot}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "=== Deploying to $SSH_HOST ==="
+echo "=== Deploying to $DEPLOY_PATH ==="
 
-if [ -z "${SSH_HOST:-}" ] || [ -z "${SSH_USER:-}" ]; then
-    echo "ERROR: SSH_HOST and SSH_USER must be set"
-    exit 1
+# Check if remote is Windows with PowerShell
+REMOTE_SHELL="bash"
+if ssh deploy "Get-Command powershell" 2>/dev/null; then
+    echo "Remote shell: PowerShell (Windows)"
+    REMOTE_SHELL="powershell"
+    
+    echo "Configuring remote directories..."
+    ssh deploy "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$DEPLOY_PATH' | Out-Null\"" || true
+    ssh deploy "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$DEPLOY_PATH/kickstart' | Out-Null\"" || true
+else
+    echo "Remote shell: Linux/Unix"
+    ssh deploy "mkdir -p '$DEPLOY_PATH/kickstart'" || true
 fi
 
 echo "Deploying iPXE scripts..."
-scp -o StrictHostKeyChecking=no -r *.ipxe "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+if [ "$REMOTE_SHELL" = "powershell" ]; then
+    scp -r *.ipxe deploy:"$DEPLOY_PATH/"
+else
+    scp -r *.ipxe deploy:"$DEPLOY_PATH/"
+fi
 
 echo "Processing passwords..."
 if [ -n "${ADMIN_PASSWORD_PLAINTEXT:-}" ] || [ -n "${GRUB_PASSWORD_PLAINTEXT:-}" ]; then
@@ -37,15 +50,26 @@ mkdir -p kickstart-processed
 for ks_file in kickstart/*.ks; do
     if [ -f "$ks_file" ]; then
         basename=$(basename "$ks_file")
-        envsubst < "$ks_file" > "kickstart-processed/$basename" || {
-            echo "ERROR: Failed to process $ks_file"
-            exit 1
-        }
+        # Preserve line endings - use sed instead of envsubst
+        if [ -n "${ADMIN_PASSWORD_HASHED:-}" ]; then
+            sed "s/\$ADMIN_PASSWORD_HASHED/${ADMIN_PASSWORD_HASHED}/g" "$ks_file" > "kickstart-processed/$basename"
+        else
+            cp "$ks_file" "kickstart-processed/$basename"
+        fi
+        
+        if [ -n "${GRUB_PASSWORD_HASHED:-}" ]; then
+            sed -i "s/\$GRUB_PASSWORD_HASHED/${GRUB_PASSWORD_HASHED}/g" "kickstart-processed/$basename"
+        fi
+        
+        echo "  Processed: $basename"
     fi
 done
 
 echo "Deploying kickstart files..."
-scp -o StrictHostKeyChecking=no -r kickstart-processed/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/kickstart/"
+scp -r kickstart-processed/* deploy:"$DEPLOY_PATH/kickstart/" || {
+    echo "ERROR: Failed to deploy kickstart files"
+    exit 1
+}
 
 rm -rf kickstart-processed /tmp/*.env 2>/dev/null || true
 echo "=== Deployment complete ==="

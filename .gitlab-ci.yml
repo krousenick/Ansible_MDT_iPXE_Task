@@ -37,11 +37,8 @@ deploy-staging:
   before_script:
     - apk add --no-cache openssh-client gettext openssl bash
     - chmod +x scripts/*.sh
+    - source scripts/setup_ssh.sh "$STAGING_SSH_HOST" "$STAGING_SSH_USER" "$STAGING_SSH_KEY"
   script:
-    - export SSH_HOST="$STAGING_SSH_HOST"
-    - export SSH_USER="$STAGING_SSH_USER"
-    - export SSH_KEY="$STAGING_SSH_KEY"
-    - bash scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
     - bash scripts/deploy.sh
   environment:
     name: staging
@@ -59,11 +56,8 @@ deploy-production:
   before_script:
     - apk add --no-cache openssh-client gettext openssl bash
     - chmod +x scripts/*.sh
+    - source scripts/setup_ssh.sh "$PROD_SSH_HOST" "$PROD_SSH_USER" "$PROD_SSH_KEY"
   script:
-    - export SSH_HOST="$PROD_SSH_HOST"
-    - export SSH_USER="$PROD_SSH_USER"
-    - export SSH_KEY="$PROD_SSH_KEY"
-    - bash scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
     - bash scripts/deploy.sh
   environment:
     name: production
@@ -80,11 +74,8 @@ download-fedora-iso:
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends curl openssh-client p7zip-full ca-certificates > /dev/null 2>&1
     - chmod +x scripts/*.sh
+    - source scripts/setup_ssh.sh "$PROD_SSH_HOST" "$PROD_SSH_USER" "$PROD_SSH_KEY"
   script:
-    - export SSH_HOST="$PROD_SSH_HOST"
-    - export SSH_USER="$PROD_SSH_USER"
-    - export SSH_KEY="$PROD_SSH_KEY"
-    - bash scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
     - bash scripts/download_fedora.sh
   environment:
     name: production
@@ -97,13 +88,10 @@ build-ipxe:
   stage: deploy
   image: ubuntu:latest
   before_script:
-    - apt-get update && apt-get install -y --no-install-recommends build-essential libssl-dev git openssh-client ca-certificates liblzma-dev > /dev/null 2>&1
+    - apt-get update && apt-get install -y --no-install-recommends build-essential libssl-dev liblzma-dev git openssh-client ca-certificates > /dev/null 2>&1
     - chmod +x scripts/*.sh
+    - source scripts/setup_ssh.sh "$PROD_SSH_HOST" "$PROD_SSH_USER" "$PROD_SSH_KEY"
   script:
-    - export SSH_HOST="$PROD_SSH_HOST"
-    - export SSH_USER="$PROD_SSH_USER"
-    - export SSH_KEY="$PROD_SSH_KEY"
-    - bash scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
     - bash scripts/build_ipxe.sh
   environment:
     name: production

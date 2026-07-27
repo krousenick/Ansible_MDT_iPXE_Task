@@ -24,9 +24,33 @@ Host deploy
     HostName $SSH_HOST
     User $SSH_USER
     IdentityFile ~/.ssh/id_ed25519
-    StrictHostKeyChecking accept-new
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
 EOF
 
 chmod 600 ~/.ssh/config
+
+echo "Testing SSH connection..."
+if ! ssh deploy "echo test" 2>/dev/null; then
+    echo "ERROR: SSH connection test failed"
+    exit 1
+fi
+
+echo "Detecting remote shell..."
+if ssh deploy "Get-Command powershell" 2>/dev/null; then
+    echo "  Remote shell supports PowerShell"
+    cat >> ~/.ssh/config << 'EOF'
+
+Host deploy-powershell
+    HostName $SSH_HOST
+    User $SSH_USER
+    IdentityFile ~/.ssh/id_ed25519
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    RequestTTY yes
+    RemoteCommand powershell.exe -NoLogo
+EOF
+    chmod 600 ~/.ssh/config
+fi
 
 echo "SSH configured for $SSH_USER@$SSH_HOST"

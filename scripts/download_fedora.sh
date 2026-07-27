@@ -3,6 +3,12 @@ set -euo pipefail
 
 FEDORA_VERSION="${FEDORA_VERSION:-44}"
 DEPLOY_PATH="${DEPLOY_PATH:-F:/wwwroot}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source shared functions
+if [ -f "$SCRIPT_DIR/remote_helpers.sh" ]; then
+    source "$SCRIPT_DIR/remote_helpers.sh"
+fi
 
 echo "=== Downloading Fedora $FEDORA_VERSION ISO ==="
 
@@ -41,17 +47,30 @@ mkdir -p /tmp/fedora_extract
 }
 
 echo "Deploying to IIS..."
-ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" "mkdir -p $DEPLOY_PATH/fedora/${FEDORA_VERSION}/x86_64/iso" || {
-    echo "ERROR: Failed to create remote directory"
-    exit 1
-}
 
-scp -o StrictHostKeyChecking=no -r /tmp/fedora_extract/* "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/fedora/${FEDORA_VERSION}/x86_64/iso/" || {
+# Create directory using detected shell
+if type remote_mkdir &>/dev/null; then
+    remote_mkdir "$DEPLOY_PATH/fedora/${FEDORA_VERSION}/x86_64/iso"
+else
+    # Fallback - try PowerShell first, then bash
+    if ssh deploy "Get-Command powershell" 2>/dev/null; then
+        ssh deploy "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$DEPLOY_PATH/fedora/${FEDORA_VERSION}/x86_64/iso' | Out-Null\"" || true
+    else
+        ssh deploy "mkdir -p '$DEPLOY_PATH/fedora/${FEDORA_VERSION}/x86_64/iso'" || true
+    fi
+fi
+
+scp -r /tmp/fedora_extract/* deploy:"$DEPLOY_PATH/fedora/${FEDORA_VERSION}/x86_64/iso/" || {
     echo "ERROR: Failed to upload files"
     exit 1
 }
 
-ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" "ln -sfn ${FEDORA_VERSION} $DEPLOY_PATH/fedora/latest" || true
+# Create symlink
+if type remote_cmd &>/dev/null; then
+    remote_cmd "New-Item -ItemType SymbolicLink -Path '$DEPLOY_PATH/fedora/latest' -Target '${FEDORA_VERSION}' -Force" || true
+else
+    ssh deploy "ln -sfn ${FEDORA_VERSION} '$DEPLOY_PATH/fedora/latest'" || true
+fi
 
 rm -rf fedora.iso /tmp/fedora_extract 2>/dev/null || true
 
