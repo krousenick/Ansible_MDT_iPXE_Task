@@ -5,10 +5,6 @@ stages:
 variables:
   DEPLOY_PATH: "F:/wwwroot"
 
-.ssh_setup: &ssh_setup
-  - chmod +x scripts/*.sh
-  - source scripts/setup_ssh.sh
-
 ipxe-lint:
   stage: lint
   image: ubuntu:latest
@@ -39,17 +35,14 @@ deploy-staging:
   stage: deploy
   image: python:3.12-alpine
   before_script:
-    - apk add --no-cache openssh-client gettext openssl
-    - *ssh_setup
-    - export SSH_HOST="$STAGING_SSH_HOST"
-    - export SSH_USER="$STAGING_SSH_USER"
-    - export SSH_KEY="$STAGING_SSH_KEY"
+    - apk add --no-cache openssh-client gettext openssl bash
+    - chmod +x scripts/*.sh
   script:
     - export SSH_HOST="$STAGING_SSH_HOST"
     - export SSH_USER="$STAGING_SSH_USER"
     - export SSH_KEY="$STAGING_SSH_KEY"
-    - source scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
-    - source scripts/deploy.sh
+    - bash scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
+    - bash scripts/deploy.sh
   environment:
     name: staging
     url: http://$STAGING_SSH_HOST
@@ -64,13 +57,14 @@ deploy-production:
   stage: deploy
   image: python:3.12-alpine
   before_script:
-    - apk add --no-cache openssh-client gettext openssl
+    - apk add --no-cache openssh-client gettext openssl bash
+    - chmod +x scripts/*.sh
   script:
     - export SSH_HOST="$PROD_SSH_HOST"
     - export SSH_USER="$PROD_SSH_USER"
     - export SSH_KEY="$PROD_SSH_KEY"
-    - source scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
-    - source scripts/deploy.sh
+    - bash scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
+    - bash scripts/deploy.sh
   environment:
     name: production
     url: http://$PROD_SSH_HOST
@@ -84,14 +78,14 @@ download-fedora-iso:
   stage: deploy
   image: ubuntu:latest
   before_script:
-    - apt-get update && apt-get install -y --no-install-recommends wget curl openssh-client p7zip-full > /dev/null 2>&1
+    - apt-get update && apt-get install -y --no-install-recommends curl openssh-client p7zip-full ca-certificates > /dev/null 2>&1
+    - chmod +x scripts/*.sh
   script:
-    - chmod +x scripts/download_fedora.sh
     - export SSH_HOST="$PROD_SSH_HOST"
     - export SSH_USER="$PROD_SSH_USER"
     - export SSH_KEY="$PROD_SSH_KEY"
-    - source scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
-    - ./scripts/download_fedora.sh
+    - bash scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
+    - bash scripts/download_fedora.sh
   environment:
     name: production
     url: http://$PROD_SSH_HOST
@@ -103,14 +97,14 @@ build-ipxe:
   stage: deploy
   image: ubuntu:latest
   before_script:
-    - apt-get update && apt-get install -y build-essential libssl-dev git openssh-client > /dev/null 2>&1
+    - apt-get update && apt-get install -y --no-install-recommends build-essential libssl-dev git openssh-client ca-certificates liblzma-dev > /dev/null 2>&1
+    - chmod +x scripts/*.sh
   script:
-    - chmod +x scripts/build_ipxe.sh
     - export SSH_HOST="$PROD_SSH_HOST"
     - export SSH_USER="$PROD_SSH_USER"
     - export SSH_KEY="$PROD_SSH_KEY"
-    - source scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
-    - ./scripts/build_ipxe.sh
+    - bash scripts/setup_ssh.sh "$SSH_HOST" "$SSH_USER" "$SSH_KEY"
+    - bash scripts/build_ipxe.sh
   environment:
     name: production
     url: http://$PROD_SSH_HOST

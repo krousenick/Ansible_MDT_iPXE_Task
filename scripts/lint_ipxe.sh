@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "=== Linting iPXE Scripts ==="
 FAILED=0

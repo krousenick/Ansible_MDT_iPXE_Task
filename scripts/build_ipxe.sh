@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "=== Building iPXE with HTTPS + EFI support ==="
 
@@ -30,19 +30,32 @@ cat > config/local.h << 'EOF'
 EOF
 
 echo "Building EFI binary..."
-make -j$(nproc) bin-x86_64-efi/ipxe.efi
+make -j"$(nproc)" bin-x86_64-efi/ipxe.efi || {
+    echo "ERROR: EFI build failed"
+    exit 1
+}
 
 echo "Building BIOS binary..."
-make -j$(nproc) bin/ipxe.pxe
+make -j"$(nproc)" bin/ipxe.pxe || {
+    echo "ERROR: BIOS build failed"
+    exit 1
+}
 
 mkdir -p /tmp/ipxe-output
 cp bin-x86_64-efi/ipxe.efi /tmp/ipxe-output/
 cp bin/ipxe.pxe /tmp/ipxe-output/
 
 echo "Deploying to IIS..."
-ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" "mkdir -p $DEPLOY_PATH/ipxe"
-scp -o StrictHostKeyChecking=no /tmp/ipxe-output/* "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/ipxe/"
+ssh -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" "mkdir -p $DEPLOY_PATH/ipxe" || {
+    echo "ERROR: Failed to create remote directory"
+    exit 1
+}
 
-rm -rf /tmp/ipxe /tmp/ipxe-output
+scp -o StrictHostKeyChecking=no /tmp/ipxe-output/* "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/ipxe/" || {
+    echo "ERROR: Failed to upload files"
+    exit 1
+}
+
+rm -rf /tmp/ipxe /tmp/ipxe-output 2>/dev/null || true
 
 echo "=== iPXE build complete ==="

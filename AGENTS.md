@@ -2,6 +2,26 @@
 
 This repository contains **iPXE boot scripts** (.ipxe), **Kickstart files** (.ks), and **CI/CD automation** for network PXE boot and automated OS installations.
 
+## 0. Important Repository Standards
+
+### Line Endings
+- **All files except PowerShell scripts must use LF (Unix) line endings**
+- PowerShell scripts (`.ps1`) must use CRLF (Windows) line endings
+- Configure Git: `git config --global core.autocrlf false`
+
+### Error Handling
+All scripts must:
+- Use `set -euo pipefail` (bash) or `set -e` (sh)
+- Check for required variables before use
+- Provide meaningful error messages to stderr
+- Exit with non-zero status on failure
+- Clean up temporary files on exit (use traps if needed)
+
+### GitLab CI Progress
+- Do NOT use progress bars (`--progress`, `--show-progress`, `--progress-bar`)
+- Use `curl -sS` for silent but error-reporting downloads
+- All output should be plain text suitable for CI logs
+
 ## 1. Build/Lint/Test Commands
 
 ### GitLab CI Pipeline

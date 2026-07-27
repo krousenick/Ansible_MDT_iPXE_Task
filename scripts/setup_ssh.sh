@@ -1,12 +1,17 @@
-#!/bin/ash
-set -e
+#!/bin/bash
+set -euo pipefail
 
-SSH_HOST="${1:-$PROD_SSH_HOST}"
-SSH_USER="${2:-$PROD_SSH_USER}"
-SSH_KEY="${3:-$PROD_SSH_KEY}"
+SSH_HOST="${1:-${SSH_HOST:-}}"
+SSH_USER="${2:-${SSH_USER:-}}"
+SSH_KEY="${3:-${SSH_KEY:-}}"
 
 if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ]; then
-    echo "ERROR: SSH credentials not configured"
+    echo "ERROR: SSH_HOST and SSH_USER must be provided"
+    exit 1
+fi
+
+if [ -z "$SSH_KEY" ]; then
+    echo "ERROR: SSH_KEY must be provided"
     exit 1
 fi
 
@@ -21,5 +26,7 @@ Host deploy
     IdentityFile ~/.ssh/id_ed25519
     StrictHostKeyChecking accept-new
 EOF
+
+chmod 600 ~/.ssh/config
 
 echo "SSH configured for $SSH_USER@$SSH_HOST"
