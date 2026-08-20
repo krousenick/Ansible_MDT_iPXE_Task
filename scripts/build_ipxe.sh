@@ -22,11 +22,13 @@ cat > config/local.h << 'EOF'
 
 /* Image formats */
 #define IMAGE_ELF
+#define IMAGE_JPEG
 #define IMAGE_PNG
 #define IMAGE_ZLIB
 
 /* Console - enable graphical framebuffer for menus */
 #define CONSOLE_FRAMEBUFFER
+#define CONSOLE_PC_KBD
 
 /* Menu support */
 #define AUTOBOOT_MENU
