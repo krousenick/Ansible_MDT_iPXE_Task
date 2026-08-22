@@ -9,7 +9,7 @@
 #
 
 ### Installs from the network over http
-url --url=https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/x86_64/os
+url --url=https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Everything/x86_64/os/
 
 ### Add COPR repos for Bazzite gaming packages
 repo --name=copr:copr.fedorainfracloud.org:ublue-os:staging --baseurl=https://download.copr.fedorainfracloud.org/results/ublue-os/staging/fedora-44-x86_64/
@@ -48,7 +48,8 @@ timezone America/New_York --utc
 ### Sets how the boot loader should be installed.
 ### Gaming kernel parameters: low latency, no watchdog, split lock mitigation off
 ### FIPS kernel parameter for crypto compliance
-bootloader --location=boot --append="split_lock_mitigate=0 nmi_watchdog=0 quiet fips=1"
+### Audit=1 kernel parameter for security logging
+bootloader --location=boot --append="audit=1 split_lock_mitigate=0 nmi_watchdog=0 quiet fips=1"
 
 ### Initialize any invalid partition tables found on disks.
 zerombr
@@ -85,10 +86,10 @@ logvol /                     --fstype=xfs     --name=lv_root     --vgname=sysvg 
 ### Packages selection (Bazzite-style gaming packages)
 %packages --excludedocs --inst-langs=en --exclude-weakdeps
 @Core
-@graphical-server-environment
-@GNOME
+@gnome-desktop
 @multimedia
 @hardware-support
+@base-x
 
 # System utilities
 chrony
@@ -98,11 +99,13 @@ rsyslog-gnutls
 rng-tools
 tmux
 cloud-utils-growpart
-net-tools
 iputils
 scap-security-guide
 selinux-policy
 selinux-policy-targeted
+audit
+audispd-plugins
+fapolicyd
 
 # FIPS compliance packages
 gnutls-fips
@@ -115,7 +118,6 @@ tree
 git
 vim-enhanced
 bind-utils
-wget2-wget
 unzip
 fzf
 
@@ -135,6 +137,8 @@ oddjob-mkhomedir
 openldap-clients
 accountsservice
 dconf
+
+ImageMagick
 
 # Gaming packages (available in Fedora 44)
 lutris
@@ -177,6 +181,13 @@ mesa-demos
 
 # Wayland EGL support for NVIDIA
 egl-wayland
+
+# Exclude X11 packages (Wayland-only, but keep XWayland for gaming)
+-xorg-x11-server-Xorg
+-xorg-x11-utils
+-xorg-x11-apps
+-xorg-x11-fonts*
+-xorg-x11-drv-*
 
 # RGB lighting control
 openrgb
@@ -242,70 +253,14 @@ EOF
 dracut -f --regenerate-all 2>/dev/null || true
 
 # ==============================================================================
-# 2. Configure SSSD for Active Directory (post-install setup required)
+# 2. Download AD join script from webserver (moved to separate script)
 # ==============================================================================
-# Download the AD join helper script from web server
-# This script requires admin credentials at runtime to join the domain
 curl -fsSL "https://netboot.krouse.io/scripts/ad-join-domain.sh" -o /usr/local/bin/ad-join-domain 2>/dev/null || \
 curl -fsSL "file:///mnt/install/scripts/ad-join-domain.sh" -o /usr/local/bin/ad-join-domain 2>/dev/null || true
 
-# Fallback: create minimal inline version if curl fails
-if [ ! -f /usr/local/bin/ad-join-domain ]; then
-    cat << 'EOF' > /usr/local/bin/ad-join-domain
-#!/bin/bash
-set -euo pipefail
-if [ $# -lt 2 ]; then
-    echo "Usage: $0 <domain> <admin-user> [computer-ou]"
-    exit 1
+if [ -f /usr/local/bin/ad-join-domain ]; then
+    chmod +x /usr/local/bin/ad-join-domain
 fi
-DOMAIN="$1"
-ADMIN_USER="$2"
-COMPUTER_OU="${3:-}"
-REALM=$(echo "$DOMAIN" | tr "[:lower:]" "[:upper:]")
-systemctl enable --now oddjobd.service 2>/dev/null || true
-if [ -n "$COMPUTER_OU" ]; then
-    realm join --user="$ADMIN_USER" --computer-ou="$COMPUTER_OU" \
-        --client-software=sssd --server-software=active-directory "$DOMAIN"
-else
-    realm join --user="$ADMIN_USER" \
-        --client-software=sssd --server-software=active-directory "$DOMAIN"
-fi
-authselect select sssd with-mkhomedir --force
-systemctl restart sssd.service
-echo "Successfully joined $DOMAIN"
-EOF
-fi
-
-chmod +x /usr/local/bin/ad-join-domain
-
-# Create SSSD config directory
-mkdir -p /etc/sssd
-touch /etc/sssd/sssd.conf
-chmod 600 /etc/sssd/sssd.conf
-
-# Pre-configure SSSD for AD
-cat << 'EOF' > /etc/sssd/sssd.conf
-[sssd]
-config_file_version = 2
-services = nss, pam, sudo
-domains = shadowutils
-
-[nss]
-filter_users = root,named,avahi,haldaemon,dbus,radiusd,news,nscd,postfix
-filter_groups = root,named,avahi,haldaemon,dbus,radiusd,news,nscd,postfix
-
-[pam]
-
-[domain/shadowutils]
-id_provider = files
-
-# After joining AD, a new domain section will be added automatically
-EOF
-chmod 600 /etc/sssd/sssd.conf
-
-# Enable SSSD services
-systemctl enable sssd.service 2>/dev/null || true
-systemctl enable oddjobd.service 2>/dev/null || true
 
 # ==============================================================================
 # 3. Set tmux as default shell (STIG compliance)
@@ -341,10 +296,6 @@ set-option -g default-terminal 'screen-256color'
 # History limit (audit trail)
 set-option -g history-limit 10000
 
-# Enforce UTF-8
-set-option -g utf8 on
-set-option -g status-utf8 on
-
 # Display session info in status bar
 set-option -g status on
 set-option -g status-interval 15
@@ -378,7 +329,6 @@ KexAlgorithms curve25519-sha256,ecdh-sha2-nistp521,ecdh-sha2-nistp384
 HostKeyAlgorithms rsa-sha2-512,rsa-sha2-256,ecdsa-sha2-nistp521,ecdsa-sha2-nistp384
 
 # STIG-compliant settings
-Protocol 2
 LogLevel VERBOSE
 PermitRootLogin no
 MaxAuthTries 3
@@ -463,7 +413,6 @@ echo 'server 10.3.0.6 burst prefer' >> /etc/chrony.conf
 dnf makecache
 
 echo "kladmin ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/kladmin
-sed -i "s/^.*requiretty/#Defaults requiretty/" /etc/sudoers
 
 # ==============================================================================
 # 5. GNOME Remote Desktop configuration (RDP server)
@@ -487,11 +436,18 @@ chown 1001:1001 /home/kladmin/.config/autostart/grd-rdp-enable.desktop
 # ==============================================================================
 mkdir -p /opt/.{packer,ansible}/tmp
 
-fapolicyd-cli --file add /opt/.packer/tmp --trust-file packer
-fapolicyd-cli --file add /opt/.ansible/tmp --trust-file ansible
+# Create fapolicyd trust files (daemon not running in kickstart)
+mkdir -p /etc/fapolicyd/trust.d
+cat << 'EOF' > /etc/fapolicyd/trust.d/packer
+/opt/.packer/tmp
+EOF
+cat << 'EOF' > /etc/fapolicyd/trust.d/ansible
+/opt/.ansible/tmp
+EOF
 
 chown 1001:1001 -R /opt/.{packer,ansible}
 
+# Create fapolicyd rules for packer/ansible directories
 cat << 'EOF' > /etc/fapolicyd/rules.d/10-packer.rules
 allow perm=any uid=1001 : dir=/opt/.packer/tmp
 EOF
@@ -510,14 +466,9 @@ fagenrules --load
 if lspci -nn | grep -qi 'nvidia'; then
     echo "NVIDIA GPU detected - installing NVIDIA drivers"
 
-    cat << 'EOF' > /etc/yum.repos.d/cuda.repo
-[cuda]
-name=NVIDIA CUDA Repository
-baseurl=https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/
-enabled=1
-gpgcheck=1
-gpgkey=https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/D42D0685.pub
-EOF
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo -o /etc/yum.repos.d/cuda-fedora44.repo
+
+    rpm --import https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/73CD9B30.pub
 
     dnf install -y cuda-drivers cuda-toolkit
 
@@ -566,9 +517,17 @@ fi
 # ==============================================================================
 mkdir -p /home/kladmin/.local/share /home/kladmin/.steam/steam /home/kladmin/.wine
 
-fapolicyd-cli --file add /home/kladmin/.local/share --trust-file games
-fapolicyd-cli --file add /home/kladmin/.steam --trust-file steam
-fapolicyd-cli --file add /home/kladmin/.wine --trust-file wine
+# Create fapolicyd trust files for gaming directories
+mkdir -p /etc/fapolicyd/trust.d
+cat << 'EOF' > /etc/fapolicyd/trust.d/games
+/home/kladmin/.local/share
+EOF
+cat << 'EOF' > /etc/fapolicyd/trust.d/steam
+/home/kladmin/.steam
+EOF
+cat << 'EOF' > /etc/fapolicyd/trust.d/wine
+/home/kladmin/.wine
+EOF
 
 cat << 'EOF' > /etc/fapolicyd/rules.d/20-gaming.rules
 allow perm=any uid=1001 : dir=/home/kladmin/.steam/steam

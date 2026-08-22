@@ -231,13 +231,8 @@ generate_initial_avatar() {
     
     first_char=$(echo "${user%%@*}" | head -c 1 | tr '[:lower:]' '[:upper:]')
     
-    if command -v convert >/dev/null 2>&1; then
-        convert -size 96x96 xc:#4a90d9 \
-            -gravity Center -pointsize 48 -fill white \
-            -annotate +0+0 "$first_char" \
-            "$output" 2>/dev/null || return 1
-    elif command -v magick >/dev/null 2>&1; then
-        magick -size 96x96 xc:#4a90d9 \
+    if command -v magick >/dev/null 2>&1; then
+        magick -size 96x96 "xc:#4a90d9" \
             -gravity Center -pointsize 48 -fill white \
             -annotate +0+0 "$first_char" \
             "$output" 2>/dev/null || return 1
@@ -284,9 +279,8 @@ sync_user_photo() {
                     ldapsearch -H "$ldap_uri" -b "$base_dn" \
                         "(&(objectClass=user)(sAMAccountName=${user%%@*}))" \
                         thumbnailPhoto jpegPhoto 2>/dev/null | \
-                        grep -A1000 "thumbnailPhoto::" | grep -B1000 "^$" | \
-                        grep -v "^$" | grep -v "thumbnailPhoto::" | \
-                        base64 -d > "$tmp_photo" 2>/dev/null || true
+                        sed -n '/^thumbnailPhoto:: /,/^[^ ]/p' | \
+                        tail -n +2 | tr -d '\n ' | base64 -d > "$tmp_photo" 2>/dev/null || true
                     
                     if [ -s "$tmp_photo" ]; then
                         cp "$tmp_photo" "$ICONS_DIR/$user"
