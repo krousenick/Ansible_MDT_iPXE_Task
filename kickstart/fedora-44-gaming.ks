@@ -251,8 +251,8 @@ flatpak
 # ==============================================================================
 # 0. Disable suspend/hibernate (at user request for stability)
 # ==============================================================================
-mkdir -p /etc/systemd/sleep.conf.d
-cat << 'EOF' > /etc/systemd/sleep.conf.d/no-suspend.conf
+# Disable systemd sleep/hibernate modes completely
+cat << 'EOF' > /etc/systemd/sleep.conf
 [Sleep]
 SuspendMode=
 HibernateMode=
@@ -260,11 +260,15 @@ SuspendState=
 HibernateState=
 EOF
 
+chmod 644 /etc/systemd/sleep.conf
+
+# Mask all sleep-related targets
 systemctl mask sleep.target 2>/dev/null || true
 systemctl mask suspend.target 2>/dev/null || true
 systemctl mask hibernate.target 2>/dev/null || true
 systemctl mask hybrid-sleep.target 2>/dev/null || true
 
+# Configure logind to ignore all power events
 mkdir -p /etc/systemd/logind.conf.d
 cat << 'EOF' > /etc/systemd/logind.conf.d/no-suspend.conf
 [Login]
@@ -274,7 +278,27 @@ HandleLidSwitchDocked=ignore
 HandlePowerKey=ignore
 HandleSuspendKey=ignore
 HandleHibernateKey=ignore
+IdleAction=ignore
+IdleActionSec=0
 EOF
+
+# Disable GNOME power management auto-suspend (for all users)
+mkdir -p /etc/dconf/db/local.d
+cat << 'EOF' > /etc/dconf/db/local.d/00-power
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+power-button-action='nothing'
+EOF
+
+# Create dconf profile for system-wide settings
+cat << 'EOF' > /etc/dconf/profile/user
+user-db:user
+system-db:local
+EOF
+
+# Update dconf database
+dconf update 2>/dev/null || true
 
 
 # ==============================================================================
@@ -450,22 +474,28 @@ echo "$LOCAL_ADMIN ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/$LOCAL_ADMIN
 
 
 # ==============================================================================
-# 5. GNOME Remote Desktop configuration (RDP server)
+# 5. GNOME Remote Desktop configuration (Headless multi-user remote login)
 # ==============================================================================
-# Enable GNOME Remote Desktop for RDP access
-systemctl enable gnome-remote-desktop.service || true
-mkdir -p ~/.local/share/gnome-remote-desktop/
-openssl req -new -newkey rsa:4096 -days 720 -nodes -x509 -subj /C=SE/ST=NONE/L=NONE/O=GNOME/CN=gnome.org \
-    -out ~/.local/share/gnome-remote-desktop/tls.crt \
-    -keyout ~/.local/share/gnome-remote-desktop/tls.key
+# Create directory for gnome-remote-desktop system user
+mkdir -p /var/lib/gnome-remote-desktop/.local/share/gnome-remote-desktop/
 
-grdctl --system rdp set-tls-key ~gnome-remote-desktop/.local/share/gnome-remote-desktop/tls.key
-grdctl --system rdp set-tls-cert ~gnome-remote-desktop/.local/share/gnome-remote-desktop/tls.crt
+# Generate TLS certificate for RDP (system-wide)
+openssl req -new -newkey rsa:4096 -days 720 -nodes -x509 -subj /C=SE/ST=NONE/L=NONE/O=GNOME/CN=gnome.org \
+    -out /var/lib/gnome-remote-desktop/.local/share/gnome-remote-desktop/tls.crt \
+    -keyout /var/lib/gnome-remote-desktop/.local/share/gnome-remote-desktop/tls.key
+
+# Set correct ownership for gnome-remote-desktop user
+chown -R gnome-remote-desktop:gnome-remote-desktop /var/lib/gnome-remote-desktop/.local/
+
+# Configure GNOME Remote Desktop for headless multi-user remote login
+grdctl --system rdp set-tls-key /var/lib/gnome-remote-desktop/.local/share/gnome-remote-desktop/tls.key
+grdctl --system rdp set-tls-cert /var/lib/gnome-remote-desktop/.local/share/gnome-remote-desktop/tls.crt
 grdctl --system rdp set-credentials $LOCAL_ADMIN $ADMIN_PASSWORD_PLAINTEXT
 grdctl --system rdp enable
+
+# Enable system services for remote login
 systemctl enable gdm.service
 systemctl enable gnome-remote-desktop.service
-loginctl enable-linger $LOCAL_ADMIN
 
 # GNOME SELINUX PERMISSIVE
 # REF: https://discussion.fedoraproject.org/t/gnome-remote-desktop-with-selinux-enforced/115832/9
@@ -520,8 +550,8 @@ fagenrules --load
 if lspci | grep -qi "nvidia"; then
     echo "NVIDIA GPU detected - installing NVIDIA drivers"
     rpm --import https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/73CD9B30.pub
-    dnf config-manager addrepo --from-repofile=https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo || true
-    # curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo -o /etc/yum.repos.d/cuda-fedora44.repo
+    dnf config-manager addrepo --from-repofile=https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo || \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo -o /etc/yum.repos.d/cuda-fedora44.repo
 
     dnf install -yqq cuda-drivers cuda-toolkit dnf-plugin-nvidia
     nvidia-boot-update post
@@ -530,11 +560,13 @@ if lspci | grep -qi "nvidia"; then
 
     systemctl enable nvidia-persistenced 2>/dev/null || true
 
-    cat << 'EOF' > /etc/modprobe.d/nvidia-power.conf
-options nvidia NVreg_EnableGpuFirmware=1
-options nvidia NVreg_PreserveVideoMemoryAllocations=1
-options nvidia-drm modeset=1
-EOF
+    # Configure VRAM preservation for suspend/hibernate (required for gaming/ML workloads)
+    echo "options nvidia NVreg_PreserveVideoMemoryAllocations=1" > /etc/modprobe.d/nvidia-power.conf
+    
+    # Enable NVIDIA power management services for VRAM preservation
+    systemctl enable nvidia-suspend.service 2>/dev/null || true
+    systemctl enable nvidia-hibernate.service 2>/dev/null || true
+    systemctl enable nvidia-resume.service 2>/dev/null || true
     # ==============================================================================
     # Install & Configure NVIDIA GPU Exporter (For Consumer GeForce GPUs)
     # ==============================================================================
@@ -656,57 +688,20 @@ if [ -d "$HOME/.local/bin" ]; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/profile.d/mesh-llm.sh
 fi
 
-# ==============================================================================
-# 10. Gaming directory setup and fapolicyd rules
-# ==============================================================================
-mkdir -p /home/$LOCAL_ADMIN/.local/share /home/$LOCAL_ADMIN/.steam/steam /home/$LOCAL_ADMIN/.wine
-
-# Create fapolicyd trust files for gaming directories
-mkdir -p /etc/fapolicyd/trust.d
-cat << 'EOF' > /etc/fapolicyd/trust.d/games
-/home/$LOCAL_ADMIN/.local/share
-EOF
-cat << 'EOF' > /etc/fapolicyd/trust.d/steam
-/home/$LOCAL_ADMIN/.steam
-EOF
-cat << 'EOF' > /etc/fapolicyd/trust.d/wine
-/home/$LOCAL_ADMIN/.wine
-EOF
-
-cat << 'EOF' > /etc/fapolicyd/rules.d/20-gaming.rules
-allow perm=any uid=1001 : dir=/home/$LOCAL_ADMIN/.steam/steam
-allow perm=any uid=1001 : dir=/home/$LOCAL_ADMIN/.local/share/Steam
-EOF
-
-
-# Set fapolicyd to permissive (learning mode) so games and LLMs won't be killed
-sed -i 's/^permissive = 0/permissive = 1/' /etc/fapolicyd/fapolicyd.conf
-
-# Forward ONLY fapolicyd logs to syslog server 10.3.0.100 via UDP
-cat << 'EOF' > /etc/rsyslog.d/99-fapolicyd-forward.conf
-if \$programname == 'fapolicyd' then {
-    action(type="omfwd" target="$SYSLOG_SERVER" port="514" protocol="udp")
-}
-EOF
-chmod 644 /etc/fapolicyd/rules.d/20-gaming.rules
-chown root:fapolicyd /etc/fapolicyd/rules.d/20-gaming.rules
-fagenrules --load
-
+# Mesh-LLM configuration is system-wide (see /etc/profile.d/gaming.sh)
 
 # ==============================================================================
-# 11. Configure SELinux for gaming
+# 10. System-wide user configuration templates (for domain users)
 # ==============================================================================
-setsebool -P domain_can_exec_manage 1 || true
-setsebool -P wine_mmap_zero_ignore 1 || true
-setsebool -P nis_enabled 1 || true
+# Create /etc/skel structure for new domain users
+mkdir -p /etc/skel/.local/share/Steam/config
+mkdir -p /etc/skel/.steam/steam
+mkdir -p /etc/skel/.wine
+mkdir -p /etc/skel/.config/gnome-remote-desktop
+mkdir -p /etc/skel/.config/autostart
 
-
-# ==============================================================================
-# 12. Configure Steam Play (Proton) for all titles
-# ==============================================================================
-mkdir -p /home/$LOCAL_ADMIN/.local/share/Steam/config
-
-cat << 'EOF' > /home/$LOCAL_ADMIN/.local/share/Steam/config/steamapps.vdf
+# Steam Play configuration (Proton) - applies to all users
+cat << 'EOF' > /etc/skel/.local/share/Steam/config/steamapps.vdf
 "steamplay"
 {
     "EnableAppList"       "1"
@@ -715,12 +710,8 @@ cat << 'EOF' > /home/$LOCAL_ADMIN/.local/share/Steam/config/steamapps.vdf
 }
 EOF
 
-
-# ==============================================================================
-# 13. Configure GameMode
-# ==============================================================================
-mkdir -p /home/$LOCAL_ADMIN/.config
-cat << 'EOF' > /home/$LOCAL_ADMIN/.config/gamemode.ini
+# GameMode configuration - applies to all users
+cat << 'EOF' > /etc/skel/.config/gamemode.ini
 [General]
 DesiredSettings=performance
 
@@ -740,6 +731,86 @@ maxfreq=0
 minfreq=0
 restore=false
 EOF
+
+# Desktop environment - auto-start applications for all users
+# (RDP is configured system-wide in section 5 - no per-user configuration needed)
+
+# Shell environment - Bashrc additions for all users
+cat << 'EOF' > /etc/skel/.bashrc.d/gaming.sh
+# Gaming aliases and environment
+alias steam='flatpak run com.valvesoftware.Steam'
+alias lutris='flatpak run net.lutris.Lutris'
+
+# Performance optimizations for gaming
+export MANGOHUD=1
+export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json
+EOF
+
+# System-wide profile.d for gaming environment
+cat << 'EOF' > /etc/profile.d/gaming.sh
+# Mesh-LLM PATH
+if [ -d "$HOME/.local/bin" ]; then
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+# Gaming directories
+export STEAM_COMPAT_DATA_PATH="$HOME/.steam/steam/steamapps/compatdata"
+export STEAM_COMPAT_CLIENT_INSTALL_PATH="$HOME/.local/share/Steam"
+EOF
+
+# Systemd tmpfiles for gaming directories (creates for all users on login)
+cat << 'EOF' > /etc/tmpfiles.d/gaming.conf
+d /run/user/%u/.local 0755 %u %u - -
+d /run/user/%u/.steam 0755 %u %u - -
+d /run/user/%u/.wine 0755 %u %u - -
+EOF
+
+# fapolicyd trust files for all user home directories (wildcard pattern)
+mkdir -p /etc/fapolicyd/trust.d
+cat << 'EOF' > /etc/fapolicyd/trust.d/all-users
+/home/*/.local/share
+/home/*/.steam
+/home/*/.wine
+EOF
+
+# fapolicyd rules for gaming (use wildcard for all users)
+cat << 'EOF' > /etc/fapolicyd/rules.d/20-gaming.rules
+allow perm=any gid=100 : dir=/home/*/.steam/steam
+allow perm=any gid=100 : dir=/home/*/.local/share/Steam
+allow perm=any gid=100 : dir=/home/*/.wine
+allow perm=any gid=100 : dir=/home/*/.local/share
+EOF
+
+chmod 644 /etc/fapolicyd/rules.d/20-gaming.rules
+chown root:fapolicyd /etc/fapolicyd/rules.d/20-gaming.rules
+fagenrules --load
+
+# Set default permissions for user home directories
+chmod 0755 /etc/skel/.local
+chmod 0755 /etc/skel/.steam
+chmod 0755 /etc/skel/.wine
+chmod 0755 /etc/skel/.config
+
+
+# ==============================================================================
+# 11. Configure SELinux for gaming
+# ==============================================================================
+setsebool -P domain_can_mmap_files 1 || true
+setsebool -P wine_mmap_zero_ignore 1 || true
+setsebool -P nis_enabled 1 || true
+
+
+# ==============================================================================
+# 12. Steam Play configuration (system-wide, applies to all users)
+# ==============================================================================
+# Steam Play configuration installed in /etc/skel for new users
+# (Config created in section 10)
+
+
+# ==============================================================================
+# 13. GameMode configuration (in /etc/skel for all users)
+# ==============================================================================
+# (Config created in section 10)
 
 
 # ==============================================================================
@@ -929,12 +1000,22 @@ lspci -nn | grep -qi 'nvidia' && chmod +x /usr/local/bin/nvidia-oc
 
 
 # ==============================================================================
-# 18. Final ownership settings
+# 18. Final ownership settings (only for initial local admin user)
 # ==============================================================================
-chown -R 1001:1001 /home/$LOCAL_ADMIN/.local
-chown -R 1001:1001 /home/$LOCAL_ADMIN/.steam
-chown -R 1001:1001 /home/$LOCAL_ADMIN/.wine
-chown -R 1001:1001 /home/$LOCAL_ADMIN/.config
+# Apply /etc/skel to $LOCAL_ADMIN if home directory exists
+if [ -d "/home/$LOCAL_ADMIN" ]; then
+    # Copy system-wide templates to existing user
+    cp -r /etc/skel/.local /home/$LOCAL_ADMIN/ 2>/dev/null || true
+    cp -r /etc/skel/.steam /home/$LOCAL_ADMIN/ 2>/dev/null || true
+    cp -r /etc/skel/.wine /home/$LOCAL_ADMIN/ 2>/dev/null || true
+    cp -r /etc/skel/.config /home/$LOCAL_ADMIN/ 2>/dev/null || true
+    
+    # Set ownership for local admin user
+    chown -R 1001:1001 /home/$LOCAL_ADMIN/.local
+    chown -R 1001:1001 /home/$LOCAL_ADMIN/.steam
+    chown -R 1001:1001 /home/$LOCAL_ADMIN/.wine
+    chown -R 1001:1001 /home/$LOCAL_ADMIN/.config
+fi
 
 
 # ==============================================================================
@@ -954,7 +1035,7 @@ if [[ -f /tmp/configure-windows10-theme.sh ]]; then
 fi
 
 # Ensure user owns their theme files (if created)
-if [[ -d /home/$LOCAL_ADMIN/.local/share/aura-glass ]]; then
+if [[ -d "/home/$LOCAL_ADMIN/.local/share/aura-glass" ]]; then
     chown -R 1001:1001 /home/$LOCAL_ADMIN/.local/share/aura-glass
 fi
 
