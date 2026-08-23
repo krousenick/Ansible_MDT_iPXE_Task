@@ -4,7 +4,7 @@
 # OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 # Fedora 44 Gaming Edition (Bazzite-style)
-# Verified: Fedora 44 with GNOME 50, Wayland-only, kernel 7.1.x
+# Verified: Fedora 44 with GNOME 50, kernel 7.1.x
 # Target: x86_64 architecture
 #
 
@@ -28,33 +28,48 @@ keyboard us
 firstboot --disable
 
 ### Configure network information for target system and activate network devices in the installer environment
-network --bootproto=dhcp --hostname=kro-fedora-44-gaming --nameserver=10.3.0.5
+network --bootproto=dhcp --hostname=kro-fedora-44-gaming
 
 ### Lock the root account.
 rootpw --lock
 
 ### Add a user that can login and escalate privileges.
-user --name=kladmin --password=$ADMIN_PASSWORD_HASHED --iscrypted --homedir=/home/kladmin --groups=wheel --uid=1001
+user --name=$LOCAL_ADMIN --password=$ADMIN_PASSWORD_HASHED --iscrypted --homedir=/home/$LOCAL_ADMIN --groups=wheel --uid=1001 --gid=1001
 
 ### Configure firewall settings for the system.
-firewall --enabled --ssh
+firewall --enabled --ssh --port=9100:tcp,9400:tcp,9835:tcp,3131:tcp,9337:tcp --service=mdns
+
+### Sets up the authentication options for the system.
+### The SSDD profile sets sha512 to hash passwords. Passwords are shadowed by default
+### See the manual page for authselect-profile for a complete list of possible options.
+authselect select sssd with-mkhomedir with-sudo
 
 ### Sets the state of SELinux on the installed system (permissive for gaming compatibility)
 selinux --permissive
 
+### Configure SSH for the kickstart user for remote management.
+sshpw --username=$LOCAL_ADMIN --iscrypted $ADMIN_PASSWORD_HASHED
+
+### Configure system logging to forward logs to a remote syslog server (STIG Requirement)
+logging --host=$SYSLOG_SERVER
+
 ### Sets the system time zone.
-timezone America/New_York --utc
+timezone America/New_York
+timesource --ntp-server $NTP_SERVER
 
 ### Sets how the boot loader should be installed.
 ### Gaming kernel parameters: low latency, no watchdog, split lock mitigation off
 ### FIPS kernel parameter for crypto compliance
 ### Audit=1 kernel parameter for security logging
-bootloader --location=boot --append="audit=1 split_lock_mitigate=0 nmi_watchdog=0 quiet fips=1"
+bootloader --location=boot --append="audit=1 split_lock_mitigate=0 nmi_watchdog=0 quiet fips=1 boot=LABEL=BOOTF"
 
 ### Initialize any invalid partition tables found on disks.
 zerombr
 
-### Removes partitions from the system, prior to creation of new partitions.
+### Removes partitions from the system, prior to creation of new partitions. 
+### By default, no partitions are removed.
+### --linux	erases all Linux partitions.
+### --initlabel Initializes a disk (or disks) by creating a default disk label for all disks in their respective architecture.
 clearpart --all --initlabel
 
 ### Partitioning for 1TB NVMe (XFS with LVM)
@@ -72,26 +87,44 @@ part /boot                   --fstype=xfs     --size=1024      --label=BOOTFS
 part /boot/efi               --fstype=efi     --size=512       --label=EFIFS
 part pv.01                                          --size=100        --grow
 
+### Create a logical volume management (LVM) group.
 volgroup sysvg --pesize=4096 pv.01
 
-logvol swap                  --fstype=swap    --name=lv_swap     --vgname=sysvg --size=8192         --label=SWAPFS
-logvol /var/log/audit        --fstype=xfs     --name=lv_audit    --vgname=sysvg --size=4096         --label=AUDITFS --fsoptions="nodev,noexec,nosuid"
-logvol /var/log              --fstype=xfs     --name=lv_log      --vgname=sysvg --size=8192         --label=LOGFS --fsoptions="nodev,noexec,nosuid"
-logvol /var/tmp              --fstype=xfs     --name=lv_vartmp   --vgname=sysvg --size=4096         --label=VARFS --fsoptions="nodev"
-logvol /var                  --fstype=xfs     --name=lv_var      --vgname=sysvg --size=8192         --label=VTMPFS --fsoptions="nodev"
-logvol /tmp                  --fstype=xfs     --name=lv_tmp      --vgname=sysvg --size=8192         --label=TMPFS --fsoptions="nodev,noexec,nosuid"
-logvol /home                 --fstype=xfs     --name=lv_home     --vgname=sysvg --size=102400       --label=HOMEFS --fsoptions="nodev,nosuid"
-logvol /                     --fstype=xfs     --name=lv_root     --vgname=sysvg --size=20480 --grow  --label=ROOTFS
+### Logical volumes
+### Note: noexec has been waived for /tmp, /var/tmp, and /home to support Gaming & LLM workflows
+logvol swap          --fstype=swap    --name=lv_swap     --vgname=sysvg --size=8192         --label=SWAPFS
+logvol /var/log/audit--fstype=xfs     --name=lv_audit    --vgname=sysvg --size=4096         --label=AUDITFS --fsoptions="nodev,nosuid"
+logvol /var/log      --fstype=xfs     --name=lv_log      --vgname=sysvg --size=4096         --label=LOGFS   --fsoptions="nodev,nosuid"
+logvol /var          --fstype=xfs     --name=lv_var      --vgname=sysvg --size=40960        --label=VTMPFS  --fsoptions="nodev"
+logvol /var/tmp      --fstype=xfs     --name=lv_vartmp   --vgname=sysvg --size=8192         --label=VARFS   --fsoptions="nodev,nosuid"
+logvol /tmp          --fstype=xfs     --name=lv_tmp      --vgname=sysvg --size=8192         --label=TMPFS   --fsoptions="nodev,nosuid"
+logvol /             --fstype=xfs     --name=lv_root     --vgname=sysvg --size=81920        --label=ROOTFS
+logvol /home         --fstype=xfs     --name=lv_home     --vgname=sysvg --size=1000 --grow  --label=HOMEFS  --fsoptions="nodev,nosuid"
+
+### Modifies the default set of services that will run under the default runlevel.
+services --enabled=NetworkManager,sshd,chronyd,rsyslog,auditd --disabled=kdump
+
+### Configure X on the installed system.
+xconfig --defaultdesktop GNOME --startxonboot
+
+### Enable RDP to remote monitor system install
+#rdp --username=$LOCAL_ADMIN --password=$RDP_PASSWORD
 
 ### Packages selection (Bazzite-style gaming packages)
 %packages --excludedocs --inst-langs=en --exclude-weakdeps
-@Core
+@core
+@workstation-product-environment
 @gnome-desktop
 @multimedia
 @hardware-support
 @base-x
 
 # System utilities
+openssl
+bash
+coreutils
+vim-minimal
+util-linux
 chrony
 logrotate
 rsyslog
@@ -99,13 +132,18 @@ rsyslog-gnutls
 rng-tools
 tmux
 cloud-utils-growpart
+net-tools
 iputils
 scap-security-guide
 selinux-policy
 selinux-policy-targeted
+fapolicyd
+firewalld
+kmodtool
+dnf-plugins-core
+dbus-daemon
 audit
 audispd-plugins
-fapolicyd
 
 # FIPS compliance packages
 gnutls-fips
@@ -126,18 +164,23 @@ freerdp
 gnome-remote-desktop
 
 # Active Directory / FreeIPA integration
+systemd-pam
+oddjob
+realmd
+openldap-clients
+oddjob-mkhomedir
+adcli
+samba-common-tools
+cifs-utils
 freeipa-client
 freeipa-client-common
 sssd-ad
 sssd-common
 sssd-tools
 krb5-workstation
-oddjob
-oddjob-mkhomedir
 openldap-clients
 accountsservice
 dconf
-
 ImageMagick
 
 # Gaming packages (available in Fedora 44)
@@ -158,6 +201,7 @@ pipewire-jack-audio-connection-kit
 pipewire-gstreamer
 
 # Wine dependencies (lutris recommends)
+wine
 winetricks
 7zip
 fluid-soundfont-gs
@@ -166,6 +210,17 @@ fluid-soundfont-gs
 fastfetch
 btop
 hwdata
+git
+curl
+gnome-tweaks
+git
+git-lfs
+make
+gettext
+glib2-devel
+
+# Metrics Exporters
+node-exporter
 
 # GPU monitoring tools
 nvtop
@@ -181,13 +236,7 @@ mesa-demos
 
 # Wayland EGL support for NVIDIA
 egl-wayland
-
-# Exclude X11 packages (Wayland-only, but keep XWayland for gaming)
--xorg-x11-server-Xorg
--xorg-x11-utils
--xorg-x11-apps
--xorg-x11-fonts*
--xorg-x11-drv-*
+egl-wayland2
 
 # RGB lighting control
 openrgb
@@ -209,7 +258,6 @@ flatpak
 
 ### Post-installation commands.
 %post --log=/root/ks-post.log
-
 # ==============================================================================
 # 0. Disable suspend/hibernate (at user request for stability)
 # ==============================================================================
@@ -238,6 +286,7 @@ HandleSuspendKey=ignore
 HandleHibernateKey=ignore
 EOF
 
+
 # ==============================================================================
 # 1. FIPS 140-3 compliance configuration
 # ==============================================================================
@@ -252,6 +301,7 @@ EOF
 # Regenerate initramfs with FIPS module
 dracut -f --regenerate-all 2>/dev/null || true
 
+
 # ==============================================================================
 # 2. Download AD join script from webserver (moved to separate script)
 # ==============================================================================
@@ -261,6 +311,7 @@ curl -fsSL "file:///mnt/install/scripts/ad-join-domain.sh" -o /usr/local/bin/ad-
 if [ -f /usr/local/bin/ad-join-domain ]; then
     chmod +x /usr/local/bin/ad-join-domain
 fi
+
 
 # ==============================================================================
 # 3. Set tmux as default shell (STIG compliance)
@@ -308,17 +359,18 @@ bind-key -T prefix l lock-session
 bind-key -T prefix d detach-client
 EOF
 
-# Set tmux as default shell for kladmin
-usermod -s /usr/bin/tmux kladmin 2>/dev/null || true
+# Set tmux as default shell for $LOCAL_ADMIN
+usermod -s /usr/bin/tmux $LOCAL_ADMIN 2>/dev/null || true
 
 # Ensure tmux exists in /etc/shells
 grep -q '^/usr/bin/tmux$' /etc/shells || echo '/usr/bin/tmux' >> /etc/shells
+
 
 # ==============================================================================
 # 4. Basic system configuration
 # ==============================================================================
 chage -I -1 -m 0 -M 99999 -E -1 root
-chage -I -1 -m 0 -M 99999 -E -1 kladmin
+chage -I -1 -m 0 -M 99999 -E -1 $LOCAL_ADMIN
 
 # SSH configuration (OSPP/STIG best-effort)
 cat << 'EOF' > /etc/ssh/sshd_config.d/99-hardening.conf
@@ -397,7 +449,7 @@ cat << 'EOF' > /etc/audit/rules.d/99-stig.rules
 EOF
 
 # Set audit buffer and failure modes
-sed -i 's,-b.*,-b 8192,g' /etc/audit/rules.d/audit.rules 2>/dev/null || true
+sed -i 's,-b.*,-b 32000,g' /etc/audit/rules.d/audit.rules 2>/dev/null || true
 sed -i 's,-f [0-2],-f 2,g' /etc/audit/rules.d/audit.rules 2>/dev/null || true
 
 # Setup log rotation
@@ -405,14 +457,8 @@ sed -i 's,weekly,daily,g' /etc/logrotate.conf
 sed -i 's,rotate [0-9],rotate 30,g' /etc/logrotate.conf
 sed -i 's,^#*compress,compress,g' /etc/logrotate.conf
 
-# Setup Chrony configs
-sed -i 's,pool.*,,g' /etc/chrony.conf
-echo 'server 10.3.0.5 burst prefer' >> /etc/chrony.conf
-echo 'server 10.3.0.6 burst prefer' >> /etc/chrony.conf
+echo "$LOCAL_ADMIN ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/$LOCAL_ADMIN
 
-dnf makecache
-
-echo "kladmin ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/kladmin
 
 # ==============================================================================
 # 5. GNOME Remote Desktop configuration (RDP server)
@@ -421,15 +467,17 @@ echo "kladmin ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/kladmin
 systemctl enable gnome-remote-desktop.service 2>/dev/null || true
 
 # Configure RDP via gsettings (will be applied on first login)
-mkdir -p /home/kladmin/.config
-cat << 'EOF' > /home/kladmin/.config/autostart/grd-rdp-enable.desktop
+mkdir -p /home/$LOCAL_ADMIN/.config
+cat << 'EOF' > /home/$LOCAL_ADMIN/.config/autostart/grd-rdp-enable.desktop
 [Desktop Entry]
 Type=Application
 Name=Enable RDP
 Exec=sh -c 'gsettings set org.gnome.desktop.remote-desktop.rdp enable true && gsettings set org.gnome.desktop.remote-desktop.rdp auth-method prompt'
 OnlyShowIn=GNOME;
 EOF
-chown 1001:1001 /home/kladmin/.config/autostart/grd-rdp-enable.desktop
+chown 1001:1001 /home/$LOCAL_ADMIN/.config/autostart/grd-rdp-enable.desktop
+
+loginctl enable-linger $LOCAL_ADMIN
 
 # ==============================================================================
 # 6. Create and trust Packer & Ansible tmp folders
@@ -460,17 +508,20 @@ chmod 644 /etc/fapolicyd/rules.d/10-*.rules
 chown root:fapolicyd /etc/fapolicyd/rules.d/10-*.rules
 fagenrules --load
 
-# ==============================================================================
-# 7. NVIDIA GPU Detection and Driver Installation
-# ==============================================================================
-if lspci -nn | grep -qi 'nvidia'; then
+
+# =======================================================================================================
+# Install & Configure NVIDIA Drivers, CUDA Toolkit, and NVIDIA GPU Exporter (if NVIDIA GPU is detected)
+# =======================================================================================================
+if lspci | grep -qi "nvidia"; then
     echo "NVIDIA GPU detected - installing NVIDIA drivers"
-
-    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo -o /etc/yum.repos.d/cuda-fedora44.repo
-
     rpm --import https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/73CD9B30.pub
+    dnf config-manager addrepo --from-repofile=https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo || true
+    # curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo -o /etc/yum.repos.d/cuda-fedora44.repo
 
-    dnf install -y cuda-drivers cuda-toolkit
+    dnf install -y cuda-drivers cuda-toolkit dnf-plugin-nvidia
+    nvidia-boot-update post
+    echo "Staging nvidia kmod key into mokutil..."
+    echo -e "fedora\nfedora" | mokutil --import /var/lib/dkms/mok.pub
 
     systemctl enable nvidia-persistenced 2>/dev/null || true
 
@@ -479,11 +530,98 @@ options nvidia NVreg_EnableGpuFirmware=1
 options nvidia NVreg_PreserveVideoMemoryAllocations=1
 options nvidia-drm modeset=1
 EOF
-
+    # ==============================================================================
+    # Install & Configure NVIDIA GPU Exporter (For Consumer GeForce GPUs)
+    # ==============================================================================
+    echo "Downloading nvidia_gpu_exporter binary version $EXPORTER_VERSION..."
+    dnf install -y https://github.com/utkuozdemir/nvidia_gpu_exporter/releases/download/v${EXPORTER_VERSION}/nvidia-gpu-exporter_${EXPORTER_VERSION}_linux_amd64.rpm
+    # Trust the custom exporter binary so fapolicyd won't block it
+    if [ -f /usr/bin/nvidia_gpu_exporter ]; then
+        fapolicyd-cli --file add /usr/bin/nvidia_gpu_exporter --trust-file nvidia_gpu_exporter
+        fapolicyd-cli --update
+    fi
+    semanage port -a -t http_port_t -p tcp 9835 2>/dev/null || semanage port -m -t http_port_t -p tcp 9835
+    systemctl enable nvidia_gpu_exporter
     echo "NVIDIA drivers installed successfully"
 else
     echo "No NVIDIA GPU detected - skipping NVIDIA driver installation"
 fi
+
+
+
+# ==============================================================================
+# Install & Configure NVIDIA DCGM and DCGM-Exporter
+# ==============================================================================
+#echo "Installing NVIDIA DCGM host engine..."
+#dnf install -y datacenter-gpu-manager
+
+#echo "Downloading DCGM-Exporter binary from GitHub..."
+# Fetch the binary directly from NVIDIA's official release repository
+#DCGM_EXPORTER_VERSION="3.3.8-3.6.0" # Update version as needed
+#curl -sSL "https://github.com/NVIDIA/dcgm-exporter/releases/download/v${DCGM_EXPORTER_VERSION}/dcgm-exporter" -o /usr/local/bin/dcgm-exporter
+#chmod +x /usr/local/bin/dcgm-exporter
+
+# ------------------------------------------------------------------------------
+# fapolicyd (Application Whitelisting Exception for custom binary)
+# ------------------------------------------------------------------------------
+# Explicitly trust the custom binary so fapolicyd permits execution
+#fapolicyd-cli --file add /usr/local/bin/dcgm-exporter --trust-file dcgm-exporter
+#fapolicyd-cli --update
+
+# ------------------------------------------------------------------------------
+# Create DCGM-Exporter Systemd Service Unit
+# ------------------------------------------------------------------------------
+#cat << 'EOF' > /etc/systemd/system/dcgm-exporter.service
+#[Unit]
+#Description=NVIDIA DCGM Exporter for Prometheus
+#After=nv-hostengine.service
+#Requires=nv-hostengine.service
+
+#[Service]
+#Type=simple
+#ExecStart=/usr/local/bin/dcgm-exporter -address :9400
+#Restart=on-failure
+#RestartSec=5s
+
+#[Install]
+#WantedBy=multi-user.target
+#EOF
+
+# ------------------------------------------------------------------------------
+# Security Policy Exceptions (STIG Hardening)
+# ------------------------------------------------------------------------------
+# SELinux: Allow listening on TCP ports 9100 & 9400
+#semanage port -a -t http_port_t -p tcp 9100 2>/dev/null || semanage port -m -t http_port_t -p tcp 9100
+#semanage port -a -t http_port_t -p tcp 9400 2>/dev/null || semanage port -m -t http_port_t -p tcp 9400
+
+# ------------------------------------------------------------------------------
+# Enable Services
+# ------------------------------------------------------------------------------
+#systemctl enable nvidia-dcgm
+#systemctl enable node_exporter
+#systemctl enable dcgm-exporter
+
+
+# ==============================================================================
+# Security Policy Exceptions for Node Exporter (STIG Compliance)
+# ==============================================================================
+semanage port -a -t http_port_t -p tcp 9100 2>/dev/null || semanage port -m -t http_port_t -p tcp 9100
+systemctl enable node_exporter || true
+
+
+# ==============================================================================
+# 3. fapolicyd (Learning Mode & Syslog Forwarding)
+# ==============================================================================
+# Set fapolicyd to permissive (learning mode) so games and LLMs won't be killed
+sed -i 's/^permissive = 0/permissive = 1/' /etc/fapolicyd/fapolicyd.conf
+
+# Forward ONLY fapolicyd logs to syslog server 10.3.0.100 via UDP
+cat << 'EOF' > /etc/rsyslog.d/99-fapolicyd-forward.conf
+if \$programname == 'fapolicyd' then {
+    action(type="omfwd" target="$SYSLOG_SERVER" port="514" protocol="udp")
+}
+EOF
+
 
 # ==============================================================================
 # 8. Install Flatpak applications
@@ -502,6 +640,7 @@ flatpak install -y flathub com.vscodium.codium || true
 # Waterfox
 flatpak install -y flathub net.waterfox.waterfox || true
 
+
 # ==============================================================================
 # 9. Install Mesh-LLM (AI assistant tool)
 # ==============================================================================
@@ -515,28 +654,39 @@ fi
 # ==============================================================================
 # 10. Gaming directory setup and fapolicyd rules
 # ==============================================================================
-mkdir -p /home/kladmin/.local/share /home/kladmin/.steam/steam /home/kladmin/.wine
+mkdir -p /home/$LOCAL_ADMIN/.local/share /home/$LOCAL_ADMIN/.steam/steam /home/$LOCAL_ADMIN/.wine
 
 # Create fapolicyd trust files for gaming directories
 mkdir -p /etc/fapolicyd/trust.d
 cat << 'EOF' > /etc/fapolicyd/trust.d/games
-/home/kladmin/.local/share
+/home/$LOCAL_ADMIN/.local/share
 EOF
 cat << 'EOF' > /etc/fapolicyd/trust.d/steam
-/home/kladmin/.steam
+/home/$LOCAL_ADMIN/.steam
 EOF
 cat << 'EOF' > /etc/fapolicyd/trust.d/wine
-/home/kladmin/.wine
+/home/$LOCAL_ADMIN/.wine
 EOF
 
 cat << 'EOF' > /etc/fapolicyd/rules.d/20-gaming.rules
-allow perm=any uid=1001 : dir=/home/kladmin/.steam/steam
-allow perm=any uid=1001 : dir=/home/kladmin/.local/share/Steam
+allow perm=any uid=1001 : dir=/home/$LOCAL_ADMIN/.steam/steam
+allow perm=any uid=1001 : dir=/home/$LOCAL_ADMIN/.local/share/Steam
 EOF
 
+
+# Set fapolicyd to permissive (learning mode) so games and LLMs won't be killed
+sed -i 's/^permissive = 0/permissive = 1/' /etc/fapolicyd/fapolicyd.conf
+
+# Forward ONLY fapolicyd logs to syslog server 10.3.0.100 via UDP
+cat << 'EOF' > /etc/rsyslog.d/99-fapolicyd-forward.conf
+if \$programname == 'fapolicyd' then {
+    action(type="omfwd" target="$SYSLOG_SERVER" port="514" protocol="udp")
+}
+EOF
 chmod 644 /etc/fapolicyd/rules.d/20-gaming.rules
 chown root:fapolicyd /etc/fapolicyd/rules.d/20-gaming.rules
 fagenrules --load
+
 
 # ==============================================================================
 # 11. Configure SELinux for gaming
@@ -545,12 +695,13 @@ setsebool -P domain_can_exec_manage 1
 setsebool -P wine_mmap_zero_ignore 1
 setsebool -P nis_enabled 1
 
+
 # ==============================================================================
 # 12. Configure Steam Play (Proton) for all titles
 # ==============================================================================
-mkdir -p /home/kladmin/.local/share/Steam/config
+mkdir -p /home/$LOCAL_ADMIN/.local/share/Steam/config
 
-cat << 'EOF' > /home/kladmin/.local/share/Steam/config/steamapps.vdf
+cat << 'EOF' > /home/$LOCAL_ADMIN/.local/share/Steam/config/steamapps.vdf
 "steamplay"
 {
     "EnableAppList"       "1"
@@ -559,11 +710,12 @@ cat << 'EOF' > /home/kladmin/.local/share/Steam/config/steamapps.vdf
 }
 EOF
 
+
 # ==============================================================================
 # 13. Configure GameMode
 # ==============================================================================
-mkdir -p /home/kladmin/.config
-cat << 'EOF' > /home/kladmin/.config/gamemode.ini
+mkdir -p /home/$LOCAL_ADMIN/.config
+cat << 'EOF' > /home/$LOCAL_ADMIN/.config/gamemode.ini
 [General]
 DesiredSettings=performance
 
@@ -583,6 +735,7 @@ maxfreq=0
 minfreq=0
 restore=false
 EOF
+
 
 # ==============================================================================
 # 14. Configure tuned profile for gaming
@@ -622,6 +775,7 @@ EOF
 
 chmod +x /usr/lib/tuned/gaming-bazzite/script.sh
 tuned-adm profile gaming-bazzite
+
 
 # ==============================================================================
 # 15. Udev rules for gaming hardware
@@ -695,10 +849,11 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="0eb7", ATTR{idProduct}=="0*", MODE="0666"
 SUBSYSTEM=="usb", ATTR{idVendor}=="0eb7", ATTR{idProduct}=="1*", MODE="0666"
 EOF
 
+
 # ==============================================================================
 # 16. OpenRGB configuration for RGB lighting control
 # ==============================================================================
-usermod -aG i2c kladmin 2>/dev/null || true
+usermod -aG i2c $LOCAL_ADMIN 2>/dev/null || true
 
 cat << 'EOF' > /etc/modules-load.d/i2c-dev.conf
 i2c-dev
@@ -749,6 +904,7 @@ EOF
 udevadm control --reload-rules 2>/dev/null || true
 udevadm trigger 2>/dev/null || true
 
+
 # ==============================================================================
 # 17. NVIDIA overclocking utility (if NVIDIA GPU present)
 # ==============================================================================
@@ -766,13 +922,15 @@ esac
 EOF
 lspci -nn | grep -qi 'nvidia' && chmod +x /usr/local/bin/nvidia-oc
 
+
 # ==============================================================================
 # 18. Final ownership settings
 # ==============================================================================
-chown -R 1001:1001 /home/kladmin/.local
-chown -R 1001:1001 /home/kladmin/.steam
-chown -R 1001:1001 /home/kladmin/.wine
-chown -R 1001:1001 /home/kladmin/.config
+chown -R 1001:1001 /home/$LOCAL_ADMIN/.local
+chown -R 1001:1001 /home/$LOCAL_ADMIN/.steam
+chown -R 1001:1001 /home/$LOCAL_ADMIN/.wine
+chown -R 1001:1001 /home/$LOCAL_ADMIN/.config
+
 
 # ==============================================================================
 # 19. Apply Windows 10 theme (GNOME 50 compatible, idempotent)
@@ -791,11 +949,12 @@ if [[ -f /tmp/configure-windows10-theme.sh ]]; then
 fi
 
 # Ensure user owns their theme files (if created)
-if [[ -d /home/kladmin/.local/share/aura-glass ]]; then
-    chown -R 1001:1001 /home/kladmin/.local/share/aura-glass
+if [[ -d /home/$LOCAL_ADMIN/.local/share/aura-glass ]]; then
+    chown -R 1001:1001 /home/$LOCAL_ADMIN/.local/share/aura-glass
 fi
 
 %end
+
 
 ### Reboot after the installation is complete.
 reboot
