@@ -89,6 +89,13 @@ else
     log "oddjobd.service already running"
 fi
 
+log "Synchronizing system time with chronyd prior to AD join..."
+if systemctl is-active chronyd.service 2>/dev/null | grep -q "^active$"; then
+    chronyc makestep || log "WARNING: chronyc makestep failed, continuing anyway..."
+else
+    log "WARNING: chronyd is not running. Kerberos authentication may fail if time is desynchronized."
+fi
+
 CURRENT_DOMAIN=$(realm list 2>/dev/null | grep -A1 "domain-name" | grep -v "domain-name" | head -1 || true)
 
 if [ -n "$CURRENT_DOMAIN" ]; then
@@ -114,76 +121,45 @@ else
     log "Successfully joined $DOMAIN"
 fi
 
-log "Configuring authentication..."
-if ! authselect current 2>/dev/null | grep -q "sssd"; then
-    authselect select sssd with-mkhomedir --force
-    log "Configured authselect for SSSD with mkhomedir"
-else
-    if ! authselect current 2>/dev/null | grep -q "with-mkhomedir"; then
-        authselect select sssd with-mkhomedir --force
-        log "Added mkhomedir to existing SSSD authselect profile"
-    else
-        log "Authselect already configured with SSSD and mkhomedir"
-    fi
-fi
-
-log "Configuring SSSD settings..."
+log "Surgically configuring SSSD settings..."
 
 SSSD_CONF="/etc/sssd/sssd.conf"
 
-mkdir -p /etc/sssd
-
 if [ ! -f "$SSSD_CONF" ]; then
-    cat << EOF > "$SSSD_CONF"
-[sssd]
-config_file_version = 2
-services = nss, pam, sudo
-domains = shadowutils
-
-[nss]
-filter_users = root,named,avahi,haldaemon,dbus,radiusd,news,nscd,postfix
-filter_groups = root,named,avahi,haldaemon,dbus,radiusd,news,nscd,postfix
-
-[pam]
-
-[domain/shadowutils]
-id_provider = files
-EOF
-    log "Created initial SSSD configuration"
+    error "$SSSD_CONF was not generated. The domain join likely failed."
 fi
 
-chmod 600 "$SSSD_CONF"
+# The realm join command dynamically creates the domain block in lowercase
+DOMAIN_LOWER=$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]')
+# Pre-escape the forward slash so sed can process the regex safely
+DOMAIN_SED="\[domain\/$DOMAIN_LOWER\]"
 
-if ! grep -q "^\[domain/$REALM\]" "$SSSD_CONF" 2>/dev/null; then
-    cat << EOF >> "$SSSD_CONF"
+declare -A SSSD_SETTINGS=(
+    ["cache_credentials"]="True"
+    ["offline_credentials_expiration"]="60"
+    ["ldap_user_extra_attrs"]="altSecurityIdentities,altServer,authPolicy,authenticationOptions,jpegPhoto,thumbnailPhoto"
+    ["enumerate"]="False"
+)
 
-[domain/$REALM]
-id_provider = ad
-auth_provider = ad
-access_provider = ad
-chpass_provider = ad
-
-cache_credentials = True
-offline_credentials_expiration = 60
-
-ldap_user_extra_attrs = altSecurityIdentities,altServer,authPolicy,authenticationOptions,jpegPhoto,thumbnailPhoto
-
-enumerate = false
-
-pam_gssapi_services = host@${REALM}
-EOF
-    log "Added domain configuration for $REALM"
-else
-    log "Domain configuration for $REALM already exists, verifying settings..."
+# Inject or update parameters specifically within the generated domain section
+for key in "${!SSSD_SETTINGS[@]}"; do
+    val="${SSSD_SETTINGS[$key]}"
     
-    for setting in "cache_credentials = True" "offline_credentials_expiration = 60" \
-                   "ldap_user_extra_attrs = altSecurityIdentities,altServer,authPolicy,authenticationOptions,jpegPhoto,thumbnailPhoto"; do
-        if ! grep -qF "$setting" "$SSSD_CONF"; then
-            log "Adding missing setting: $setting"
-            sed -i "/^\[domain\/$REALM\]/a $setting" "$SSSD_CONF"
-        fi
-    done
-fi
+    # Check if the key already exists inside this specific domain block
+    if sed -n "/^${DOMAIN_SED}/,/^\[/p" "$SSSD_CONF" | grep -q "^${key}\s*="; then
+        log "Updating existing setting: $key"
+        sed -i -E "/^${DOMAIN_SED}/,/^\[/{s/^${key}\s*=.*/${key} = ${val}/}" "$SSSD_CONF"
+    else
+        log "Injecting new setting: $key"
+        sed -i "/^${DOMAIN_SED}/a ${key} = ${val}" "$SSSD_CONF"
+    fi
+done
+
+# Restart SSSD to apply injected configurations
+chmod 600 "$SSSD_CONF"
+chown root:root "$SSSD_CONF"
+systemctl restart sssd.service
+log "Restarted sssd.service to apply configuration"
 
 log "Configuring AccountsService for GNOME user photos..."
 
@@ -418,9 +394,9 @@ echo "=========================================="
 echo ""
 
 if realm list 2>/dev/null | grep -q "$DOMAIN"; then
-    log "✓ Successfully joined to $DOMAIN"
+    log "Successfully joined to $DOMAIN"
 else
-    log "⚠ Domain membership status uncertain"
+    log "Domain membership status uncertain"
 fi
 
 echo ""
