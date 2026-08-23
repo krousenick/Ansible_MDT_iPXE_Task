@@ -37,7 +37,7 @@ rootpw --lock
 user --name=$LOCAL_ADMIN --password=$ADMIN_PASSWORD_HASHED --iscrypted --homedir=/home/$LOCAL_ADMIN --groups=wheel --uid=1001 --gid=1001
 
 ### Configure firewall settings for the system.
-firewall --enabled --ssh --port=9100:tcp,9400:tcp,9835:tcp,3131:tcp,9337:tcp --service=mdns
+firewall --enabled --ssh --port=9100:tcp,9400:tcp,9835:tcp,3131:tcp,9337:tcp --service=mdns,rdp
 
 ### Sets up the authentication options for the system.
 ### The SSDD profile sets sha512 to hash passwords. Passwords are shadowed by default
@@ -61,7 +61,7 @@ timesource --ntp-server $NTP_SERVER
 ### Gaming kernel parameters: low latency, no watchdog, split lock mitigation off
 ### FIPS kernel parameter for crypto compliance
 ### Audit=1 kernel parameter for security logging
-bootloader --location=boot --append="audit=1 split_lock_mitigate=0 nmi_watchdog=0 quiet fips=1 boot=LABEL=BOOTF"
+bootloader --location=boot --append="audit=1 split_lock_mitigate=0 nmi_watchdog=0 quiet fips=1 boot=LABEL=BOOTFS"
 
 ### Initialize any invalid partition tables found on disks.
 zerombr
@@ -141,13 +141,11 @@ fapolicyd
 firewalld
 kmodtool
 dnf-plugins-core
-dbus-daemon
+dbus-broker
 audit
-audispd-plugins
 
 # FIPS compliance packages
-gnutls-fips
-libkcapi-fipscheck
+libkcapi-hmaccalc
 crypto-policies
 
 # Admin utilities
@@ -178,21 +176,17 @@ sssd-ad
 sssd-common
 sssd-tools
 krb5-workstation
-openldap-clients
 accountsservice
 dconf
 ImageMagick
 
-# Gaming packages (available in Fedora 44)
+# Gaming packages
 lutris
 gamescope
 mangohud
 vkBasalt
-libFAudio
 openxr
 gamemode
-libgamemode
-libgamemode-auto
 pipewire
 wireplumber
 pipewire-pulseaudio
@@ -200,7 +194,7 @@ pipewire-alsa
 pipewire-jack-audio-connection-kit
 pipewire-gstreamer
 
-# Wine dependencies (lutris recommends)
+# Wine dependencies
 wine
 winetricks
 7zip
@@ -210,10 +204,8 @@ fluid-soundfont-gs
 fastfetch
 btop
 hwdata
-git
 curl
 gnome-tweaks
-git
 git-lfs
 make
 gettext
@@ -236,7 +228,6 @@ mesa-demos
 
 # Wayland EGL support for NVIDIA
 egl-wayland
-egl-wayland2
 
 # RGB lighting control
 openrgb
@@ -246,7 +237,6 @@ ryzenadj
 
 # Flatpak support for Steam and other apps
 flatpak
-
 %end
 
 ### SCAP Security Guide - Fedora OSPP Profile (Server Hardening Guidance)
@@ -290,16 +280,15 @@ EOF
 # ==============================================================================
 # 1. FIPS 140-3 compliance configuration
 # ==============================================================================
-# Configure system-wide crypto policy to FIPS mode
-update-crypto-policies --set FIPS || true
+
 
 # Ensure FIPS is enabled in dracut for initramfs
-cat << 'EOF' > /etc/dracut.conf.d/40-fips.conf
-add_dracutmodules+=" fips "
-EOF
+# cat << 'EOF' > /etc/dracut.conf.d/40-fips.conf
+# add_dracutmodules+=" fips "
+# EOF
 
 # Regenerate initramfs with FIPS module
-dracut -f --regenerate-all 2>/dev/null || true
+# dracut -f --regenerate-all 2>/dev/null || true
 
 
 # ==============================================================================
@@ -464,20 +453,36 @@ echo "$LOCAL_ADMIN ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/$LOCAL_ADMIN
 # 5. GNOME Remote Desktop configuration (RDP server)
 # ==============================================================================
 # Enable GNOME Remote Desktop for RDP access
-systemctl enable gnome-remote-desktop.service 2>/dev/null || true
+systemctl enable gnome-remote-desktop.service || true
+mkdir -p ~/.local/share/gnome-remote-desktop/
+openssl req -new -newkey rsa:4096 -days 720 -nodes -x509 -subj /C=SE/ST=NONE/L=NONE/O=GNOME/CN=gnome.org \
+    -out ~/.local/share/gnome-remote-desktop/tls.crt \
+    -keyout ~/.local/share/gnome-remote-desktop/tls.key
 
-# Configure RDP via gsettings (will be applied on first login)
-mkdir -p /home/$LOCAL_ADMIN/.config
-cat << 'EOF' > /home/$LOCAL_ADMIN/.config/autostart/grd-rdp-enable.desktop
-[Desktop Entry]
-Type=Application
-Name=Enable RDP
-Exec=sh -c 'gsettings set org.gnome.desktop.remote-desktop.rdp enable true && gsettings set org.gnome.desktop.remote-desktop.rdp auth-method prompt'
-OnlyShowIn=GNOME;
-EOF
-chown 1001:1001 /home/$LOCAL_ADMIN/.config/autostart/grd-rdp-enable.desktop
-
+grdctl --system rdp set-tls-key ~gnome-remote-desktop/.local/share/gnome-remote-desktop/tls.key
+grdctl --system rdp set-tls-cert ~gnome-remote-desktop/.local/share/gnome-remote-desktop/tls.crt
+grdctl --system rdp set-credentials $LOCAL_ADMIN $ADMIN_PASSWORD_PLAINTEXT
+grdctl --system rdp enable
+systemctl enable gdm.service
+systemctl enable gnome-remote-desktop.service
 loginctl enable-linger $LOCAL_ADMIN
+
+# GNOME SELINUX PERMISSIVE
+# REF: https://discussion.fedoraproject.org/t/gnome-remote-desktop-with-selinux-enforced/115832/9
+tee /tmp/grd.te << EOF > /dev/null
+module grd 1.0;
+require {
+    type system_dbusd_t;
+    type unconfined_service_t;
+    type xdm_t;
+    class tcp_socket { getattr getopt read setopt shutdown write };
+}
+allow system_dbusd_t unconfined_service_t:tcp_socket { read write };
+allow xdm_t unconfined_service_t:tcp_socket { getattr getopt read setopt shutdown write };
+EOF
+checkmodule -M -m -o /tmp/grd.mod /tmp/grd.te
+semodule_package -o /tmp/grd.pp -m /tmp/grd.mod
+semodule -i /tmp/grd.pp
 
 # ==============================================================================
 # 6. Create and trust Packer & Ansible tmp folders
@@ -518,7 +523,7 @@ if lspci | grep -qi "nvidia"; then
     dnf config-manager addrepo --from-repofile=https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo || true
     # curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo -o /etc/yum.repos.d/cuda-fedora44.repo
 
-    dnf install -y cuda-drivers cuda-toolkit dnf-plugin-nvidia
+    dnf install -yqq cuda-drivers cuda-toolkit dnf-plugin-nvidia
     nvidia-boot-update post
     echo "Staging nvidia kmod key into mokutil..."
     echo -e "fedora\nfedora" | mokutil --import /var/lib/dkms/mok.pub
@@ -534,7 +539,7 @@ EOF
     # Install & Configure NVIDIA GPU Exporter (For Consumer GeForce GPUs)
     # ==============================================================================
     echo "Downloading nvidia_gpu_exporter binary version $EXPORTER_VERSION..."
-    dnf install -y https://github.com/utkuozdemir/nvidia_gpu_exporter/releases/download/v${EXPORTER_VERSION}/nvidia-gpu-exporter_${EXPORTER_VERSION}_linux_amd64.rpm
+    dnf install -yqq https://github.com/utkuozdemir/nvidia_gpu_exporter/releases/download/v${EXPORTER_VERSION}/nvidia-gpu-exporter_${EXPORTER_VERSION}_linux_amd64.rpm
     # Trust the custom exporter binary so fapolicyd won't block it
     if [ -f /usr/bin/nvidia_gpu_exporter ]; then
         fapolicyd-cli --file add /usr/bin/nvidia_gpu_exporter --trust-file nvidia_gpu_exporter
@@ -629,16 +634,16 @@ EOF
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
 
 # Steam
-flatpak install -y flathub com.valvesoftware.Steam || true
+flatpak install -y flathub com.valvesoftware.Steam 2>/dev/null || true
 
 # Discord
-flatpak install -y flathub com.discordapp.Discord || true
+flatpak install -y flathub com.discordapp.Discord 2>/dev/null || true
 
 # VSCodium
-flatpak install -y flathub com.vscodium.codium || true
+flatpak install -y flathub com.vscodium.codium 2>/dev/null || true
 
 # Waterfox
-flatpak install -y flathub net.waterfox.waterfox || true
+flatpak install -y flathub net.waterfox.waterfox 2>/dev/null || true
 
 
 # ==============================================================================
@@ -691,9 +696,9 @@ fagenrules --load
 # ==============================================================================
 # 11. Configure SELinux for gaming
 # ==============================================================================
-setsebool -P domain_can_exec_manage 1
-setsebool -P wine_mmap_zero_ignore 1
-setsebool -P nis_enabled 1
+setsebool -P domain_can_exec_manage 1 || true
+setsebool -P wine_mmap_zero_ignore 1 || true
+setsebool -P nis_enabled 1 || true
 
 
 # ==============================================================================
