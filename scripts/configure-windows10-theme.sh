@@ -41,38 +41,35 @@ detect_kickstart_env() {
 }
 
 check_gnome_version() {
-    local gnome_version
-    gnome_version=$(gnome-shell --version 2>/dev/null | grep -oP '\d+' | head -1) || gnome_version="0"
+    GNOME_VERSION=$(gnome-shell --version 2>/dev/null | grep -oP '\d+' | head -1) || GNOME_VERSION="0"
     
-    if [[ "$gnome_version" -eq 0 ]]; then
-        if [[ -f /usr/share/gnome-shell/org.gnome.Shell-top-level-menus.gresource ]]; then
+    if [[ "$GNOME_VERSION" -eq 0 ]]; then
+        if rpm -q gnome-shell >/dev/null 2>&1; then
             log "GNOME Shell not running (kickstart environment), using package detection"
-            gnome_version=$(rpm -q gnome-shell --queryformat '%{VERSION}' 2>/dev/null | cut -d. -f1) || gnome_version="50"
-            log "Detected GNOME $gnome_version from package"
+            GNOME_VERSION=$(rpm -q gnome-shell --queryformat '%{VERSION}' 2>/dev/null | cut -d. -f1) || GNOME_VERSION="50"
+            log "Detected GNOME $GNOME_VERSION from package"
         else
-            gnome_version="50"
-            log "Cannot detect GNOME version, defaulting to $gnome_version"
+            GNOME_VERSION="50"
+            log "Cannot detect GNOME version, defaulting to $GNOME_VERSION"
         fi
     fi
     
-    if [[ "$gnome_version" -lt 46 ]]; then
-        error "GNOME $gnome_version is not supported. Minimum: GNOME 46"
+    if [[ "$GNOME_VERSION" -lt 46 ]]; then
+        error "GNOME $GNOME_VERSION is not supported. Minimum: GNOME 46"
     fi
     
-    log "Targeting GNOME $gnome_version"
-    echo "$gnome_version"
+    log "Targeting GNOME $GNOME_VERSION"
 }
 
-get_extension_version_for_gnome() {
-    local gnome_version="$1"
-    case "$gnome_version" in
-        50) echo "v60" ;;
-        49) echo "v58" ;;
-        48) echo "v57" ;;
-        47) echo "v55" ;;
-        46) echo "v54" ;;
-        *)  echo "v60" ;;
-    esac
+get_gnome50_extensions() {
+    cat << 'EOF'
+dash-to-panel@jderose9.github.com|73|https://extensions.gnome.org/download-extension/dash-to-panel@jderose9.github.com.shell-extension.zip?version_tag=69173
+arcmenu@arcmenu.com|69.2|https://extensions.gnome.org/download-extension/arcmenu@arcmenu.com.shell-extension.zip?version_tag=71319
+user-theme@gnome-shell-extensions.gcampax.github.com|50.3|https://extensions.gnome.org/download-extension/user-theme@gnome-shell-extensions.gcampax.github.com.shell-extension.zip?version_tag=73999
+appindicatorsupport@rgcjonas.gmail.com|64|https://extensions.gnome.org/download-extension/appindicatorsupport@rgcjonas.gmail.com.shell-extension.zip?version_tag=69296
+caffeine@patapon.info|60|https://extensions.gnome.org/download-extension/caffeine@patapon.info.shell-extension.zip?version_tag=69851
+drive-menu@gnome-shell-extensions.gcampax.github.com|50.3|https://extensions.gnome.org/download-extension/drive-menu@gnome-shell-extensions.gcampax.github.com.shell-extension.zip?version_tag=73991
+EOF
 }
 
 install_dependencies() {
@@ -230,29 +227,17 @@ install_aura_glass() {
 }
 
 install_extensions() {
-    log "Installing GNOME extensions for GNOME 50..."
+    log "Installing GNOME extensions for GNOME $GNOME_VERSION..."
     
-    local gnome_version
-    gnome_version=$(gnome-shell --version 2>/dev/null | grep -oP '\d+' | head -1) || gnome_version="50"
-    local ext_version
-    ext_version=$(get_extension_version_for_gnome "$gnome_version")
+    rm -rf /usr/share/gnome-shell/extensions/ArcMenu@ArcMenu.com \
+           /usr/share/gnome-shell/extensions/trayIconsReloaded@selfmade.pl
     
-    declare -A EXTENSION_URLS=(
-        ["dash-to-panel@jderose9.github.com"]="https://extensions.gnome.org/extension-data/dash-to-paneljderose9.github.com.$ext_version.shell-extension.zip"
-        ["ArcMenu@ArcMenu.com"]="https://extensions.gnome.org/extension-data/ArcMenuArcMenu.com.$ext_version.shell-extension.zip"
-        ["user-theme@gnome-shell-extensions.gcampax.github.com"]="https://extensions.gnome.org/extension-data/user-themegnome-shell-extensions.gcampax.github.com.$ext_version.shell-extension.zip"
-        ["appindicatorsupport@rgcjonas.gmail.com"]="https://extensions.gnome.org/extension-data/appindicatorsupportrgcjonas.gmail.com.$ext_version.shell-extension.zip"
-        ["trayIconsReloaded@selfmade.pl"]="https://extensions.gnome.org/extension-data/trayIconsReloadedselfmade.pl.$ext_version.shell-extension.zip"
-        ["caffeine@patapon.info"]="https://extensions.gnome.org/extension-data/caffeinepatapon.info.$ext_version.shell-extension.zip"
-        ["drive-menu@gnome-shell-extensions.gcampax.github.com"]="https://extensions.gnome.org/extension-data/drive-menugnome-shell-extensions.gcampax.github.com.$ext_version.shell-extension.zip"
-    )
-    
-    for ext_uuid in "${!EXTENSION_URLS[@]}"; do
+    while IFS='|' read -r ext_uuid ext_version download_url; do
+        [[ -z "$ext_uuid" ]] && continue
         log "Installing extension: $ext_uuid"
         
         local ext_dir="/usr/share/gnome-shell/extensions/$ext_uuid"
         local ext_version_file="$ext_dir/.installed-version"
-        local download_url="${EXTENSION_URLS[$ext_uuid]}"
         local installed_version=""
         
         if [[ -f "$ext_version_file" ]]; then
@@ -271,17 +256,18 @@ install_extensions() {
         
         mkdir -p "$ext_dir"
         
-        if curl -sSL "$download_url" -o "$TEMP_DIR/ext.zip"; then
-            unzip -q "$TEMP_DIR/ext.zip" -d "$ext_dir" 2>/dev/null || true
+        if curl -fsSL "$download_url" -o "$TEMP_DIR/ext.zip" && unzip -tqq "$TEMP_DIR/ext.zip" >/dev/null 2>&1; then
+            unzip -qo "$TEMP_DIR/ext.zip" -d "$ext_dir"
             chmod -R 755 "$ext_dir"
             echo "$ext_version" > "$ext_version_file"
             log "Installed: $ext_uuid ($ext_version)"
         else
-            log "Warning: Could not download $ext_uuid"
+            log "Warning: Could not download or extract $ext_uuid"
+            rm -rf "$ext_dir"
         fi
         
         rm -f "$TEMP_DIR/ext.zip"
-    done
+    done < <(get_gnome50_extensions)
 }
 
 configure_theme_systemwide() {
@@ -347,7 +333,7 @@ cursor-theme='$ICON_THEME_NAME'
 antialiasing='rgba'
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-panel@jderose9.github.com', 'ArcMenu@ArcMenu.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'appindicatorsupport@rgcjonas.gmail.com', 'trayIconsReloaded@selfmade.pl', 'caffeine@patapon.info', 'drive-menu@gnome-shell-extensions.gcampax.github.com']
+enabled-extensions=['dash-to-panel@jderose9.github.com', 'arcmenu@arcmenu.com', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'appindicatorsupport@rgcjonas.gmail.com', 'caffeine@patapon.info', 'drive-menu@gnome-shell-extensions.gcampax.github.com']
 
 [org/gnome/desktop/wm/keybindings]
 switch-to-workspace-up=['disabled']
@@ -374,10 +360,9 @@ if [ "$XDG_CURRENT_DESKTOP" = "GNOME" ] && [ -z "$WINDOWS10_THEME_APPLIED" ]; th
     if command -v gsettings >/dev/null 2>&1; then
         gsettings set org.gnome.shell enabled-extensions \
             "['dash-to-panel@jderose9.github.com', \
-              'ArcMenu@ArcMenu.com', \
+              'arcmenu@arcmenu.com', \
               'user-theme@gnome-shell-extensions.gcampax.github.com', \
               'appindicatorsupport@rgcjonas.gmail.com', \
-              'trayIconsReloaded@selfmade.pl', \
               'caffeine@patapon.info', \
               'drive-menu@gnome-shell-extensions.gcampax.github.com']" 2>/dev/null || true
         gsettings set org.gnome.desktop.wm.preferences button-layout ':minimize,maximize,close' 2>/dev/null || true
@@ -392,7 +377,7 @@ SCRIPT
 setup_gdm_theme() {
     log "Configuring GDM login screen theme..."
     
-    local gdm_dir="/etc/dconf/gdm.d"
+    local gdm_dir="/etc/dconf/db/gdm.d"
     local gdm_profile="$gdm_dir/99-windows10-theme"
     
     mkdir -p "$gdm_dir"
@@ -431,29 +416,6 @@ EOF
     log "User profile photo directories configured"
 }
 
-setup_user_profile_photos() {
-    log "Setting up user profile photos support..."
-    
-    local icons_dir="/var/lib/AccountsService/icons"
-    local default_faces="/usr/share/pixmaps/faces"
-    
-    mkdir -p "$icons_dir" "$default_faces"
-    chmod 755 "$icons_dir" "$default_faces"
-    
-    local avatar_directories="'/var/lib/AccountsService/icons/', '/usr/share/pixmaps/faces/', '/home/\$USER/.face'"
-    
-    local db_file="/etc/dconf/db/gdm.d/01-avatars"
-    mkdir -p "/etc/dconf/db/gdm.d"
-    
-    cat > "$db_file" << EOF
-[org/gnome/desktop/interface]
-avatar-directories=['/var/lib/AccountsService/icons/', '/usr/share/pixmaps/faces/']
-EOF
-    
-    dconf update
-    log "User profile photo directories configured"
-}
-
 install_fonts() {
     log "Updating font cache..."
     
@@ -472,7 +434,7 @@ verify_installation() {
     [[ -d "$GNOME_THEME_DIR/$GTK_THEME_NAME" ]] || { log "Warning: GTK theme not found"; errors=$((errors + 1)); }
     [[ -d "/usr/share/icons/$ICON_THEME_NAME" ]] || { log "Warning: Icon theme not found"; errors=$((errors + 1)); }
     [[ -d "/usr/share/gnome-shell/extensions/dash-to-panel@jderose9.github.com" ]] || { log "Warning: dash-to-panel extension not found"; errors=$((errors + 1)); }
-    [[ -d "/usr/share/gnome-shell/extensions/ArcMenu@ArcMenu.com" ]] || { log "Warning: ArcMenu extension not found"; errors=$((errors + 1)); }
+    [[ -d "/usr/share/gnome-shell/extensions/arcmenu@arcmenu.com" ]] || { log "Warning: ArcMenu extension not found"; errors=$((errors + 1)); }
     [[ -d "/var/lib/AccountsService/icons" ]] || { log "Warning: Avatar directory not found"; errors=$((errors + 1)); }
     
     if [[ $errors -eq 0 ]]; then
@@ -499,7 +461,6 @@ Installed Components:
     * ArcMenu (Start menu - GNOME 50 compatible)
     * User Themes
     * AppIndicator Support
-    * Tray Icons Reloaded
     * Caffeine (disable screensaver/suspend on demand)
     * Removable Drive Menu
   - User Profile Photos: Enabled for GDM and system menu
@@ -560,11 +521,9 @@ main() {
     
     check_root
     detect_kickstart_env
+    check_gnome_version
     
-    local gnome_version
-    gnome_version=$(check_gnome_version)
-    
-    log "Configuring for GNOME $gnome_version"
+    log "Configuring for GNOME $GNOME_VERSION"
     
     if [[ "$KICKSTART_ENV" == "true" ]]; then
         log "Running in kickstart mode - gsettings/dconf will be configured but not applied"
