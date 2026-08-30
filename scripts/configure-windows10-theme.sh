@@ -124,6 +124,7 @@ install_gtk_theme_dark() {
     
     local theme_version_file="$GNOME_THEME_DIR/Windows-10-Dark/.version"
     local current_version=""
+    local src_theme="$THEME_SOURCE_DIR/Windows-10-Dark"
     
     if [[ -f "$theme_version_file" ]]; then
         current_version=$(cat "$theme_version_file" 2>/dev/null || echo "")
@@ -139,12 +140,15 @@ install_gtk_theme_dark() {
         rm -rf "$GNOME_THEME_DIR/Windows-10-Dark"
     fi
     
-    git clone --depth 1 https://github.com/B00merang-Project/Windows-10-Dark.git "$TEMP_DIR/gtk-theme-dark" || \
-        error "Failed to clone Dark GTK theme"
-    
-    mkdir -p "$GNOME_THEME_DIR/Windows-10-Dark"
-    cp -r "$TEMP_DIR/gtk-theme-dark"/* "$GNOME_THEME_DIR/Windows-10-Dark/" || \
-        error "Failed to copy Dark GTK theme"
+    if [[ -d "$src_theme" ]]; then
+        cp -r "$src_theme"/* "$GNOME_THEME_DIR/Windows-10-Dark/" || \
+            error "Failed to copy Dark GTK theme from submodule"
+    else
+        git clone --depth 1 https://github.com/B00merang-Project/Windows-10-Dark.git "$TEMP_DIR/gtk-theme-dark" || \
+            error "Failed to clone Dark GTK theme"
+        cp -r "$TEMP_DIR/gtk-theme-dark"/* "$GNOME_THEME_DIR/Windows-10-Dark/" || \
+            error "Failed to copy Dark GTK theme"
+    fi
     
     chmod -R 755 "$GNOME_THEME_DIR/Windows-10-Dark"
     echo "$SCRIPT_VERSION" > "$theme_version_file"
