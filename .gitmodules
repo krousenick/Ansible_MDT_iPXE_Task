@@ -1,0 +1,9 @@
+[submodule "themes/Windows-10"]
+	path = themes/Windows-10
+	url = https://github.com/B00merang-Project/Windows-10.git
+[submodule "themes/Windows-10-Dark"]
+	path = themes/Windows-10-Dark
+	url = https://github.com/B00merang-Project/Windows-10-Dark.git
+[submodule "themes/icons/Windows-10"]
+	path = themes/icons/Windows-10
+	url = https://github.com/B00merang-Artwork/Windows-10.git

@@ -191,6 +191,7 @@ pipewire
 wireplumber
 pipewire-pulseaudio
 pipewire-alsa
+alsa-firmware
 pipewire-jack-audio-connection-kit
 pipewire-gstreamer
 

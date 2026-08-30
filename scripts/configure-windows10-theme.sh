@@ -1,13 +1,18 @@
 #!/bin/bash
-# configure-windows10-theme.sh - Idempotent Windows 10 + Aura Glass theme installer
+# configure-windows10-theme.sh - Idempotent Windows 10 theme installer (Windows-10 GTK + Icons)
 # Compatible with GNOME 50 / Fedora 44
 # Safe to run multiple times - will only install/update if needed
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 GNOME_THEME_DIR="/usr/share/themes"
 GTK_THEME_NAME="Windows-10"
 ICON_THEME_NAME="Windows-10"
+THEME_SOURCE_DIR="${REPO_ROOT}/themes"
+INSTALL_AURA="${INSTALL_AURA:-false}"
 AURA_ACCENT="blue"
 AURA_TRANSPARENCY="90%"
 TEMP_DIR=$(mktemp -d)
@@ -83,6 +88,7 @@ install_gtk_theme() {
     
     local theme_version_file="$GNOME_THEME_DIR/$GTK_THEME_NAME/.version"
     local current_version=""
+    local src_theme="$THEME_SOURCE_DIR/Windows-10"
     
     if [[ -f "$theme_version_file" ]]; then
         current_version=$(cat "$theme_version_file" 2>/dev/null || echo "")
@@ -98,12 +104,15 @@ install_gtk_theme() {
         rm -rf "$GNOME_THEME_DIR/$GTK_THEME_NAME"
     fi
     
-    git clone --depth 1 https://github.com/B00merang-Project/Windows-10.git "$TEMP_DIR/gtk-theme" || \
-        error "Failed to clone GTK theme"
-    
-    mkdir -p "$GNOME_THEME_DIR/$GTK_THEME_NAME"
-    cp -r "$TEMP_DIR/gtk-theme"/* "$GNOME_THEME_DIR/$GTK_THEME_NAME/" || \
-        error "Failed to copy GTK theme"
+    if [[ -d "$src_theme" ]]; then
+        cp -r "$src_theme"/* "$GNOME_THEME_DIR/$GTK_THEME_NAME/" || \
+            error "Failed to copy GTK theme from submodule"
+    else
+        git clone --depth 1 https://github.com/B00merang-Project/Windows-10.git "$TEMP_DIR/gtk-theme" || \
+            error "Failed to clone GTK theme"
+        cp -r "$TEMP_DIR/gtk-theme"/* "$GNOME_THEME_DIR/$GTK_THEME_NAME/" || \
+            error "Failed to copy GTK theme"
+    fi
     
     chmod -R 755 "$GNOME_THEME_DIR/$GTK_THEME_NAME"
     echo "$SCRIPT_VERSION" > "$theme_version_file"
@@ -177,6 +186,11 @@ install_icon_theme() {
 }
 
 install_aura_glass() {
+    if [[ "$INSTALL_AURA" != "true" ]]; then
+        log "Aura Glass installation disabled (set INSTALL_AURA=true to enable)"
+        return 0
+    fi
+    
     log "Installing Aura Glass frosted glass theme..."
     
     local aura_version_file="/root/.config/aura-glass-version"
@@ -313,6 +327,10 @@ hotkeys-overlay-combo='TEMPORARILY'
 preview-timeout=400
 group-apps=true
 scroll-panel-action='CYCLE_WINDOWS'
+show-trash=true
+show-places=true
+animate-window-open=true
+animate-window-close=true
 
 [org/gnome/shell/extensions/ArcMenu]
 menu-layout='Default'
@@ -325,6 +343,24 @@ menu-border-color='#cccccc'
 menu-border-width=1
 menu-item-active-background-color='#0078d7'
 menu-item-active-foreground-color='#ffffff'
+menu-button-padding=8
+menu-arrow-spacing=6
+menu-shortcut-padding=12
+
+[org/gnome/shell/extensions/caffeine]
+activate-notification=true
+enable-screensaver=true
+show-indicator=true
+brightness-enable=true
+night-light-enable=false
+
+[org/gnome/shell/extensions/appindicatorsupport]
+has-indicators=true
+tray-order='[]'
+
+[org/gnome/shell/extensions/drive-menu]
+show-in-tray=false
+power-off-icon=true
 
 [org/gnome/desktop/peripherals/mouse]
 cursor-theme='$ICON_THEME_NAME'
@@ -340,6 +376,31 @@ switch-to-workspace-up=['disabled']
 switch-to-workspace-down=['disabled']
 switch-to-workspace-left=['<Super>Left']
 switch-to-workspace-right=['<Super>Right']
+
+[org/gnome/nautilus/preferences]
+default-folder-viewer='list-view'
+default-zoom-level=100
+show-directory-item-counts='always'
+click-policy='double'
+search-filter-time-type='any'
+show-image-thumbnails='local-only'
+date-time-format='locale'
+show-hidden-files=false
+
+[org/gnome/nautilus/list-view]
+default-zoom-level=100
+use-tighter-layouts=true
+
+[org/gnome/nautilus/icon-view]
+default-zoom-level=100
+
+[org/gnome/nautilus/window-state]
+initial-size=(1000, 700)
+
+[org/gtk.Settings.FileChooser]
+show-hidden=false
+sidebar-width=200
+location-mode='path-bar'
 EOF
     
     log "Created system-wide theme configuration"
