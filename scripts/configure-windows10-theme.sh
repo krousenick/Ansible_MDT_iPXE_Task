@@ -16,7 +16,7 @@ INSTALL_AURA="${INSTALL_AURA:-false}"
 AURA_ACCENT="blue"
 AURA_TRANSPARENCY="90%"
 TEMP_DIR=$(mktemp -d)
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="2.2.0"
 FORCE_REINSTALL="${FORCE_REINSTALL:-false}"
 # Detect primary user (for bookmarks)
 ADMIN_USER="${ADMIN_USER:-$(getent passwd 1000 | cut -d: -f1 || echo "admin")}"
@@ -498,9 +498,71 @@ initial-size=(1000, 700)
 show-hidden=false
 sidebar-width=200
 location-mode='path-bar'
+
+# Blur My Shell - Window/Application transparency
+# Based on Aura Glass configuration
+[org/gnome/shell/extensions/blur-my-shell]
+hacks-level=2
+settings-version=2
+
+[org/gnome/shell/extensions/blur-my-shell/applications]
+blur=true
+blur-on-overview=false
+brightness=1.0
+corner-radius=30
+dynamic-opacity=false
+enable-all=false
+opacity=240
+sigma=12
+whitelist=['org.gnome.Nautilus', 'org.gnome.Settings', 'gnome-control-center', 'org.gnome.TextEditor', 'org.gnome.SystemMonitor', 'org.gnome.Calculator', 'org.gnome.Extensions', 'org.gnome.Tweaks', 'org.gnome.Ptyxis', 'org.gnome.Console', 'gnome-terminal', 'org.gnome.DiskUtility', 'org.gnome.Logs', 'org.gnome.Calendar', 'org.gnome.Weather', 'org.gnome.Clocks', 'org.gnome.Characters', 'org.gnome.FontViewer', 'org.gnome.Loupe', 'org.gnome.Snapshot']
+blacklist=['*chrome*', '*google-chrome*', '*chromium*', '*discord*', '*vesktop*', '*brave*', '*firefox*', '*code*', '*steam*', '*spotify*', '*electron*']
+
+[org/gnome/shell/extensions/blur-my-shell/panel]
+blur=true
+brightness=0.6
+corner-radius=0
+force-light-text=true
+override-background=true
+override-background-dynamically=false
+sigma=30
+static-blur=true
+style-panel=0
+
+[org/gnome/shell/extensions/blur-my-shell/popup]
+blur=true
+notification=true
+sigma=30
+brightness=1.15
+corner-radius=20
+menu-corner-radius=26
+quick-settings-corner-radius=33
+osd-corner-radius=12
+override-background=false
+
+[org/gnome/shell/extensions/blur-my-shell/lockscreen]
+blur=true
+pipeline='pipeline_default'
+
+[org/gnome/shell/extensions/blur-my-shell/overview]
+blur=true
+pipeline='pipeline_default'
+style-components=1
+
+[org/gnome/shell/extensions/blur-my-shell/dash-to-dock]
+blur=true
+brightness=1.0
+override-background=true
+sigma=4
+static-blur=false
+
+[org/gnome/shell/extensions/blur-my-shell/appfolder]
+blur=true
+brightness=1.0
+sigma=50
+style-dialogs=2
 EOF
      
-    log "Created system-wide theme configuration"
+    log "Created system-wide theme configuration with Blur My Shell settings"
     
     # Configure Nautilus bookmarks for Quick Access (Windows-style)
     setup_nautilus_bookmarks
@@ -569,6 +631,7 @@ setup_gdm_theme() {
     
     mkdir -p "$gdm_dir"
     
+    # Configure GDM theme settings that apply at login screen
     cat > "$gdm_profile" << EOF
 [org/gnome/desktop/interface]
 gtk-theme='$GTK_THEME_NAME'
@@ -576,11 +639,87 @@ icon-theme='$ICON_THEME_NAME'
 avatar-directories=['/var/lib/AccountsService/icons/', '/usr/share/pixmaps/faces/']
 
 [org/gnome/shell]
-enabled-extensions=['dash-to-panel@jderose9.github.com']
+enabled-extensions=['dash-to-panel@jderose9.github.com', 'user-theme@gnome-shell-extensions.gcampax.github.com']
+
+# Apply shell theme at GDM login
+[org/gnome/shell/extensions/user-theme]
+name='$GTK_THEME_NAME'
+
+[org/gnome/desktop/background]
+picture-uri-dark='file:///usr/share/backgrounds/windows10-gdm.png'
+picture-options='zoom'
+color-shading-type='solid'
+primary-color='#000000'
+secondary-color='#000000'
 EOF
     
+    # Create blurred wallpaper for GDM login screen (like Aura Glass)
+    # This mirrors the desktop wallpaper with blur effect
+    setup_gdm_wallpaper
+    
     dconf update
-    log "GDM theme configured with avatar support"
+    log "GDM theme configured with Windows 10 shell, icons, and blurred wallpaper"
+}
+
+# Create blurred wallpaper for GDM login screen
+# Based on Aura Glass approach: blur user's wallpaper and use as GDM background
+setup_gdm_wallpaper() {
+    log "Setting up GDM login screen wallpaper..."
+    
+    local gdm_wallpaper="/usr/share/backgrounds/windows10-gdm.png"
+    local user_wallpaper=""
+    
+    # Get user's current wallpaper
+    if [[ -f "$HOME/.config/dconf/user" ]]; then
+        # Try to get from dconf
+        user_wallpaper=$(dconf get org.gnome.desktop.background picture-uri-dark 2>/dev/null | tr -d "'" || true)
+    fi
+    
+    # Fallback to common wallpaper locations
+    if [[ -z "$user_wallpaper" ]] || [[ "$user_wallpaper" == "nothing" ]]; then
+        for path in "$HOME/Pictures/Wallpaper.png" "$HOME/Pictures/wallpaper.png" "$HOME/.local/share/backgrounds/wallpaper.png" "/usr/share/backgrounds/gnome/adwaita-d.jxl"; do
+            if [[ -f "$path" ]]; then
+                user_wallpaper="$path"
+                break
+            fi
+        done
+    fi
+    
+    # Extract file path from URI if needed
+    user_wallpaper="${user_wallpaper#file://}"
+    
+    if [[ -n "$user_wallpaper" ]] && [[ -f "$user_wallpaper" ]]; then
+        log "Creating blurred GDM wallpaper from: $user_wallpaper"
+        
+        # Use ImageMagick to create blurred version (or Python/PIL like Aura Glass)
+        if command -v magick >/dev/null 2>&1; then
+            magick "$user_wallpaper" -resize 2560x1440^ -gravity center -extent 2560x1440 \
+                -blur 0x30 -brightness -10% "$gdm_wallpaper" 2>/dev/null || {
+                # Fallback if blur fails
+                cp "$user_wallpaper" "$gdm_wallpaper" 2>/dev/null || true
+            }
+        elif command -v convert >/dev/null 2>&1; then
+            convert "$user_wallpaper" -resize 2560x1440^ -gravity center -extent 2560x1440 \
+                -blur 0x30 -brightness -10% "$gdm_wallpaper" 2>/dev/null || {
+                cp "$user_wallpaper" "$gdm_wallpaper" 2>/dev/null || true
+            }
+        else
+            # No ImageMagick - copy as-is (will still work, just not blurred)
+            cp "$user_wallpaper" "$gdm_wallpaper" 2>/dev/null || true
+            log "Warning: ImageMagick not available, using unblurred wallpaper"
+        fi
+        
+        chmod 644 "$gdm_wallpaper" 2>/dev/null || true
+    else
+        log "No user wallpaper found, GDM will use default"
+        # Touch the file to mark it exists (will use system default)
+        touch "$gdm_wallpaper"
+    fi
+    
+    # Make wallpaper world-readable
+    chmod 644 "$gdm_wallpaper" 2>/dev/null || true
+    
+    log "GDM wallpaper configured at $gdm_wallpaper"
 }
 
 setup_user_profile_photos() {
