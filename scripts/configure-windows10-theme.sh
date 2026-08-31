@@ -161,6 +161,7 @@ install_icon_theme() {
     local icon_dir="/usr/share/icons/$ICON_THEME_NAME"
     local theme_version_file="$icon_dir/.version"
     local current_version=""
+    local src_icons="$THEME_SOURCE_DIR/icons/Windows-10"
     
     if [[ -f "$theme_version_file" ]]; then
         current_version=$(cat "$theme_version_file" 2>/dev/null || echo "")
@@ -175,12 +176,15 @@ install_icon_theme() {
         rm -rf "$icon_dir"
     fi
     
-    git clone --depth 1 https://github.com/B00merang-Artwork/Windows-10.git "$TEMP_DIR/icon-theme" || \
-        error "Failed to clone icon theme"
-    
-    mkdir -p "$icon_dir"
-    cp -r "$TEMP_DIR/icon-theme"/* "$icon_dir/" || \
-        error "Failed to copy icon theme"
+    if [[ -d "$src_icons" ]]; then
+        cp -r "$src_icons"/* "$icon_dir/" || \
+            error "Failed to copy icon theme from submodule"
+    else
+        git clone --depth 1 https://github.com/B00merang-Artwork/Windows-10.git "$TEMP_DIR/icon-theme" || \
+            error "Failed to clone icon theme"
+        cp -r "$TEMP_DIR/icon-theme"/* "$icon_dir/" || \
+            error "Failed to copy icon theme"
+    fi
     
     chmod -R 755 "$icon_dir"
     
@@ -392,11 +396,11 @@ date-time-format='locale'
 show-hidden-files=false
 
 [org/gnome/nautilus/list-view]
-default-zoom-level=100
+default-zoom-level='large'
 use-tighter-layouts=true
 
 [org/gnome/nautilus/icon-view]
-default-zoom-level=100
+default-zoom-level='extra-large'
 
 [org/gnome/nautilus/window-state]
 initial-size=(1000, 700)
