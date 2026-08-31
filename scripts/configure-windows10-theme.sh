@@ -18,6 +18,8 @@ AURA_TRANSPARENCY="90%"
 TEMP_DIR=$(mktemp -d)
 SCRIPT_VERSION="2.0.0"
 FORCE_REINSTALL="${FORCE_REINSTALL:-false}"
+# Detect primary user (for bookmarks)
+ADMIN_USER="${ADMIN_USER:-$(getent passwd 1000 | cut -d: -f1 || echo "admin")}"
 
 trap "rm -rf $TEMP_DIR" EXIT
 
@@ -188,6 +190,31 @@ install_icon_theme() {
     
     chmod -R 755 "$icon_dir"
     
+    # Copy modern folder icons from Breeze for Windows 11 look
+    log "Installing modern folder icons (Breeze)..."
+    local breeze_svg="/usr/share/icons/Adwaita/scalable/places"
+    local dest_svg="$icon_dir/scalable/places"
+    
+    if [[ -d "$breeze_svg" ]]; then
+        mkdir -p "$dest_svg"
+        for icon in folder folder-documents folder-download folder-music folder-pictures folder-videos folder-publicshare folder-templates; do
+            if [[ -f "$breeze_svg/$icon.svg" ]]; then
+                cp -f "$breeze_svg/$icon.svg" "$dest_svg/" 2>/dev/null || true
+            fi
+        done
+        # Also copy PNG versions for different sizes
+        for size in 16 22 24 32 48; do
+            local breeze_png="/usr/share/icons/Adwaita/${size}x${size}/places"
+            local dest_png="$icon_dir/${size}x${size}/places"
+            if [[ -d "$breeze_png" ]]; then
+                mkdir -p "$dest_png"
+                cp -f "$breeze_png/folder.png" "$dest_png/" 2>/dev/null || true
+                cp -f "$breeze_png/folder-open.png" "$dest_png/" 2>/dev/null || true
+            fi
+        done
+        log "Modern folder icons installed"
+    fi
+    
     gtk-update-icon-cache -f "$icon_dir" 2>/dev/null || true
     echo "$SCRIPT_VERSION" > "$theme_version_file"
     log "Icon theme installed successfully (v$SCRIPT_VERSION)"
@@ -355,6 +382,10 @@ menu-button-padding=8
 menu-arrow-spacing=6
 menu-shortcut-padding=12
 
+[org/gnome/shell/extensions/arcmenu]
+menu-layout='Windows11'
+force-new-window=true
+
 [org/gnome/shell/extensions/caffeine]
 activate-notification=true
 enable-screensaver=true
@@ -410,11 +441,40 @@ show-hidden=false
 sidebar-width=200
 location-mode='path-bar'
 EOF
-    
+     
     log "Created system-wide theme configuration"
+    
+    # Configure Nautilus bookmarks for Quick Access (Windows-style)
+    setup_nautilus_bookmarks
     
     dconf update
     log "Updated dconf database"
+}
+
+setup_nautilus_bookmarks() {
+    log "Configuring Nautilus sidebar bookmarks (Quick Access)..."
+    
+    local bookmarks_file="$HOME/.config/gtk-3.0/bookmarks"
+    
+    mkdir -p "$(dirname "$bookmarks_file")"
+    
+    # Use unquoted EOF to expand variables, then replace admin placeholder
+    cat > "$bookmarks_file" << EOF
+file:///home/${ADMIN_USER}/Desktop Desktop
+file:///home/${ADMIN_USER}/Documents Documents
+file:///home/${ADMIN_USER}/Downloads Downloads
+file:///home/${ADMIN_USER}/Pictures Pictures
+file:///home/${ADMIN_USER}/Music Music
+file:///home/${ADMIN_USER}/Videos Videos
+file:///home/${ADMIN_USER} This PC
+EOF
+    
+    # Also set system-wide bookmarks for new users
+    local system_bookmarks="/etc/skel/.config/gtk-3.0/bookmarks"
+    mkdir -p "$(dirname "$system_bookmarks")"
+    cp "$bookmarks_file" "$system_bookmarks" 2>/dev/null || true
+    
+    log "Nautilus Quick Access bookmarks configured"
 }
 
 setup_autostart_script() {
