@@ -218,27 +218,66 @@ install_icon_theme() {
     gtk-update-icon-cache -f "$icon_dir" 2>/dev/null || true
     echo "$SCRIPT_VERSION" > "$theme_version_file"
     
-    # Create Windows Start button icon if it doesn't exist
+    # ==============================================================================
+    # Windows Start Button Icon Creation
+    # ==============================================================================
+    # Purpose: Create a windows-logo.png icon for ArcMenu Start button
+    #
+    # IMPORTANT: The current implementation is a PLACEHOLDER only!
+    # - It's copies an Adwaita icon as a placeholder until a real Windows logo is available
+    # - The Adwaita terminal icon is just a generic gray placeholder
+    # - This is NOT the actual Windows 10/11 logo
+    #
+    # To get proper Windows icons, you should either:
+    # 1. Manually place a real windows-logo.png in themes/icons/Windows-10/48x48/apps/
+    # 2. Or the icon already exists in the submodule (from the earlier manual upload)
+    #
+    # The icon is then copied to all standard icon sizes (16,22,24,32,64,128,256)
+    # so it displays correctly at different scaling factors
+    # ==============================================================================
+    
     log "Creating Windows Start button icon..."
     local apps_dir="$icon_dir/48x48/apps"
     mkdir -p "$apps_dir"
     
-    # Copy from Adwaita as placeholder if not exists
-    if [[ ! -f "$apps_dir/windows-logo.png" ]]; then
-        if [[ -f "/usr/share/icons/Adwaita/48x48/apps/utilities-terminal.png" ]]; then
-            cp /usr/share/icons/Adwaita/48x48/apps/utilities-terminal.png "$apps_dir/windows-logo.png" 2>/dev/null || true
+    # Check if Windows logo icon already exists (from submodule or manual upload)
+    # Priority: 1) Check if icon was already manually placed in theme source
+    #           2) Check if icon exists in system (from earlier orb-vm copy)
+    #           3) Fallback to Adwaita placeholder
+    
+    if [[ -f "$apps_dir/windows-logo.png" ]]; then
+        # Icon already exists (from submodule or previous manual upload) - use it
+        log "Using existing windows-logo.png from theme"
+    else
+        # Try to find icon in theme source directory first
+        if [[ -d "$src_icons" ]] && [[ -f "$src_icons/48x48/apps/windows-logo.png" ]]; then
+            cp "$src_icons/48x48/apps/windows-logo.png" "$apps_dir/" 2>/dev/null || true
+            log "Copied windows-logo.png from theme source"
+        else
+            # LAST RESORT: Use Adwaita terminal icon as placeholder
+            # This is NOT a real Windows logo - just a gray placeholder
+            # TODO: Replace with actual Windows logo for production use
+            if [[ -f "/usr/share/icons/Adwaita/48x48/apps/utilities-terminal.png" ]]; then
+                cp /usr/share/icons/Adwaita/48x48/apps/utilities-terminal.png "$apps_dir/windows-logo.png" 2>/dev/null || true
+                log "WARNING: Using Adwaita placeholder - replace with real Windows logo!"
+            fi
         fi
     fi
     
-    # Also add to smaller sizes for scaling
+    # Copy to all other icon sizes needed for proper scaling
+    # GNOME will use the closest size to the panel icon size setting
     for size in 16 22 24 32 64 128 256; do
         local size_dir="$icon_dir/${size}x${size}/apps"
         mkdir -p "$size_dir"
+        
+        # Only copy if:
+        # 1. Target icon doesn't exist yet
+        # 2. Source 48x48 icon exists to copy from
         if [[ ! -f "$size_dir/windows-logo.png" ]] && [[ -f "$apps_dir/windows-logo.png" ]]; then
             cp "$apps_dir/windows-logo.png" "$size_dir/" 2>/dev/null || true
         fi
     done
-    log "Windows Start button icon created"
+    log "Windows Start button icon created (or placeholder used)"
     
     log "Icon theme installed successfully (v$SCRIPT_VERSION)"
 }
