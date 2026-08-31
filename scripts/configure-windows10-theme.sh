@@ -16,7 +16,7 @@ INSTALL_AURA="${INSTALL_AURA:-false}"
 AURA_ACCENT="blue"
 AURA_TRANSPARENCY="90%"
 TEMP_DIR=$(mktemp -d)
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.1.0"
 FORCE_REINSTALL="${FORCE_REINSTALL:-false}"
 # Detect primary user (for bookmarks)
 ADMIN_USER="${ADMIN_USER:-$(getent passwd 1000 | cut -d: -f1 || echo "admin")}"
@@ -217,6 +217,29 @@ install_icon_theme() {
     
     gtk-update-icon-cache -f "$icon_dir" 2>/dev/null || true
     echo "$SCRIPT_VERSION" > "$theme_version_file"
+    
+    # Create Windows Start button icon if it doesn't exist
+    log "Creating Windows Start button icon..."
+    local apps_dir="$icon_dir/48x48/apps"
+    mkdir -p "$apps_dir"
+    
+    # Copy from Adwaita as placeholder if not exists
+    if [[ ! -f "$apps_dir/windows-logo.png" ]]; then
+        if [[ -f "/usr/share/icons/Adwaita/48x48/apps/utilities-terminal.png" ]]; then
+            cp /usr/share/icons/Adwaita/48x48/apps/utilities-terminal.png "$apps_dir/windows-logo.png" 2>/dev/null || true
+        fi
+    fi
+    
+    # Also add to smaller sizes for scaling
+    for size in 16 22 24 32 64 128 256; do
+        local size_dir="$icon_dir/${size}x${size}/apps"
+        mkdir -p "$size_dir"
+        if [[ ! -f "$size_dir/windows-logo.png" ]] && [[ -f "$apps_dir/windows-logo.png" ]]; then
+            cp "$apps_dir/windows-logo.png" "$size_dir/" 2>/dev/null || true
+        fi
+    done
+    log "Windows Start button icon created"
+    
     log "Icon theme installed successfully (v$SCRIPT_VERSION)"
 }
 
@@ -385,6 +408,8 @@ menu-shortcut-padding=12
 [org/gnome/shell/extensions/arcmenu]
 menu-layout='Windows11'
 force-new-window=true
+menu-button-icon='/usr/share/icons/Windows-10/48x48/apps/windows-logo.png'
+menu-button-icon-size=24
 
 [org/gnome/shell/extensions/caffeine]
 activate-notification=true
