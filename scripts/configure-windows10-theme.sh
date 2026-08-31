@@ -221,19 +221,13 @@ install_icon_theme() {
     # ==============================================================================
     # Windows Start Button Icon Creation
     # ==============================================================================
-    # Purpose: Create a windows-logo.png icon for ArcMenu Start button
+    # Purpose: Copy the Windows 10/11 logo icon for ArcMenu Start button
     #
-    # IMPORTANT: The current implementation is a PLACEHOLDER only!
-    # - It's copies an Adwaita icon as a placeholder until a real Windows logo is available
-    # - The Adwaita terminal icon is just a generic gray placeholder
-    # - This is NOT the actual Windows 10/11 logo
+    # The real Windows logo is stored in the theme submodule at:
+    #   themes/icons/Windows-10/48x48/apps/windows-logo.png
     #
-    # To get proper Windows icons, you should either:
-    # 1. Manually place a real windows-logo.png in themes/icons/Windows-10/48x48/apps/
-    # 2. Or the icon already exists in the submodule (from the earlier manual upload)
-    #
-    # The icon is then copied to all standard icon sizes (16,22,24,32,64,128,256)
-    # so it displays correctly at different scaling factors
+    # The icon is copied to all required sizes (16,22,24,32,48,64,128,256)
+    # so it displays correctly at different GNOME scaling factors
     # ==============================================================================
     
     log "Creating Windows Start button icon..."
