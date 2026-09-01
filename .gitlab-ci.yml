@@ -20,12 +20,25 @@ ipxe-lint:
 
 kickstart-lint:
   stage: lint
-  image: fedora:latest
+  image: fedora:44
   before_script:
     - dnf install -y pykickstart > /dev/null 2>&1
   script:
     - chmod +x scripts/lint_kickstart.sh
     - ./scripts/lint_kickstart.sh
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+theme-lint:
+  stage: lint
+  image: fedora:44
+  before_script:
+    - dnf install -y python3 glib2 gtk4 sassc > /dev/null 2>&1
+  script:
+    - chmod +x scripts/lint_themes.sh
+    - ./scripts/lint_themes.sh
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
